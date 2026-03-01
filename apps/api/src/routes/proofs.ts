@@ -98,6 +98,51 @@ const proofStore: Array<{
   timestamp: string
 }> = []
 
+// POST /api/proofs/llm-verify — LLM API call proof via ZK-TLS
+const llmVerifySchema = z.object({
+  prompt: z.string().min(1).max(1000),
+  stellarAddress: z.string().startsWith('G').length(56).optional(),
+})
+
+proofsRouter.post('/llm-verify', zValidator('json', llmVerifySchema), async (c) => {
+  const { prompt, stellarAddress } = c.req.valid('json')
+
+  // Generate a deterministic proof hash from the prompt
+  // In production, this would use Reclaim zkFetch to call an LLM API
+  // and generate a ZK-TLS proof that the call was actually made
+  const proofHash = crypto
+    .createHash('sha256')
+    .update(`llm-proof:${prompt}:${Date.now()}`)
+    .digest('hex')
+
+  const timestamp = new Date().toISOString()
+
+  // Store as proof record
+  proofStore.push({
+    proofHash,
+    skillId: 'llm-verify',
+    provider: 'llm-api',
+    metric: prompt.slice(0, 50),
+    status: 'verified',
+    timestamp,
+  })
+
+  // In production flow:
+  // 1. zkFetch calls the LLM API (OpenAI/Anthropic/etc.)
+  // 2. Reclaim generates ZK-TLS proof of the API call
+  // 3. Proof is verified on-chain via Stellar Protocol 25 (BN254 + Poseidon)
+  // 4. Result is stored with proof hash on Stellar
+
+  return c.json({
+    verified: true,
+    proofHash,
+    prompt: prompt.slice(0, 50) + (prompt.length > 50 ? '...' : ''),
+    timestamp,
+    method: 'zk-tls-simulated',
+    note: 'Production: Reclaim zkFetch + Stellar Protocol 25 on-chain verification',
+  })
+})
+
 // GET /api/proofs/list — All proofs
 proofsRouter.get('/list', async (c) => {
   return c.json({ proofs: proofStore, total: proofStore.length })

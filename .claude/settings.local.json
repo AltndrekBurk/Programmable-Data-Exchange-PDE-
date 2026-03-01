@@ -36,7 +36,11 @@
       "Bash(git add .gitignore)",
       "Bash(git push)",
       "mcp__Claude_Preview__preview_start",
-      "Bash(npm --version)"
+      "Bash(npm --version)",
+      "Bash(node -e \":*)",
+      "Bash(curl -s \"https://friendbot.stellar.org?addr=GBF32DUEXEYEUFEYODWRZQJW4O5ZB2TZ7JA44R4OIMMPWCTRWB42LG6K\")",
+      "Bash(node -e \"process.stdin.resume\\(\\); let d=''''; process.stdin.on\\(''data'',c=>d+=c\\); process.stdin.on\\(''end'',\\(\\)=>{const j=JSON.parse\\(d\\); console.log\\(''TX:'', j.hash || j.id || ''OK''\\); console.log\\(''Status:'', j.successful !== undefined ? j.successful : ''funded''\\)}\\)\")",
+      "Bash(python3 -c \"import sys,json; d=json.load\\(sys.stdin\\); print\\(''Status:'', ''funded'' if d.get\\(''successful''\\) or d.get\\(''hash''\\) else d\\)\")"
     ]
   }
 }

@@ -86,3 +86,33 @@ providerRouter.get('/me', async (c) => {
 
   return c.json({ registered: true, ...provider })
 })
+
+// In-memory bot config store
+const botConfigStore = new Map<string, { openclawUrl: string; openclawToken: string }>()
+
+// POST /api/provider/bot-config — Save OpenClaw bot config
+const botConfigSchema = z.object({
+  stellarAddress: z.string().startsWith('G').length(56),
+  openclawUrl: z.string().url(),
+  openclawToken: z.string().min(1),
+})
+
+providerRouter.post('/bot-config', zValidator('json', botConfigSchema), async (c) => {
+  const body = c.req.valid('json')
+  const secret = process.env.PSEUDONYM_SECRET || 'dev-secret-change-in-production'
+  const pseudoId = generatePseudonym(secret, body.stellarAddress).pseudonym
+
+  botConfigStore.set(pseudoId, {
+    openclawUrl: body.openclawUrl,
+    openclawToken: body.openclawToken,
+  })
+
+  // Also update provider record if exists
+  const provider = providerStore.get(pseudoId)
+  if (provider) {
+    provider.openclawUrl = body.openclawUrl
+    providerStore.set(pseudoId, provider)
+  }
+
+  return c.json({ status: 'saved', pseudoId })
+})
