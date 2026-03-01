@@ -1,0 +1,36 @@
+{
+  "permissions": {
+    "allow": [
+      "WebFetch(domain:developers.stellar.org)",
+      "Bash(ls -la /c/Users/Burak/Desktop/dataEconomy/packages/*/src/)",
+      "Bash(npm install)",
+      "Bash(npm install --legacy-peer-deps)",
+      "Bash(npm search @reclaimprotocol)",
+      "Bash(npm view @reclaimprotocol/js-sdk version)",
+      "Bash(npm view @reclaimprotocol/zk-fetch version)",
+      "Bash(npm run build)",
+      "Bash(npm run dev)",
+      "Bash(node -e \"const pkg = require\\(''@reclaimprotocol/js-sdk/package.json''\\); console.log\\(JSON.stringify\\({main: pkg.main, exports: pkg.exports, module: pkg.module}, null, 2\\)\\)\")",
+      "Bash(node -e \"const m = require\\(''@reclaimprotocol/js-sdk''\\); console.log\\(Object.keys\\(m\\).join\\('', ''\\)\\)\")",
+      "Bash(node -e \"const m = require\\(''@reclaimprotocol/zk-fetch''\\); console.log\\(Object.keys\\(m\\).join\\('', ''\\)\\)\")",
+      "Bash(curl -s http://localhost:3001/health)",
+      "Bash(node -e \"const pkg = require\\(''@stellar/freighter-api/package.json''\\); console.log\\(pkg.version, Object.keys\\(pkg.exports || {}\\).join\\('', ''\\)\\)\")",
+      "Bash(node -e \"import\\(''@stellar/freighter-api''\\).then\\(m => console.log\\(Object.keys\\(m\\).join\\('', ''\\)\\)\\).catch\\(e => console.error\\(e.message\\)\\)\")",
+      "Bash(node -e \"import\\(''@stellar/freighter-api''\\).then\\(m => { const api = m.freighterApi || m.default; console.log\\(typeof api, Object.keys\\(api || {}\\).join\\('', ''\\)\\); }\\).catch\\(e => console.error\\(e.message\\)\\)\")",
+      "Bash(ls /c/Users/Burak/Desktop/dataEconomy/apps/web/.env*)",
+      "Bash(ls /c/Users/Burak/Desktop/dataEconomy/.env*)",
+      "Bash(curl -s \"http://localhost:3001/api/auth/challenge?address=GBCXQUEPSEGIKXLYOIF6JCQNPYELEK6FXQYRGQCCWPMGMYSIX5WNKBON\")",
+      "Bash(curl -s -X POST http://localhost:3001/api/auth/verify -H \"Content-Type: application/json\" -d '{\"\"publicKey\"\":\"\"GBCXQUEPSEGIKXLYOIF6JCQNPYELEK6FXQYRGQCCWPMGMYSIX5WNKBON\"\",\"\"signature\"\":\"\"dGVzdA==\"\",\"\"challenge\"\":\"\"test\"\"}')",
+      "Bash(gh auth status)",
+      "Bash(git config user.name)",
+      "Bash(git config user.email)",
+      "Bash(winget install GitHub.cli --accept-source-agreements --accept-package-agreements)",
+      "Bash(cmd.exe //c \"winget install GitHub.cli --accept-source-agreements --accept-package-agreements\")",
+      "Bash(npm install -g @githubnext/github-copilot-cli)",
+      "Bash(npx -y gh)",
+      "Bash(npm ls -g)",
+      "Bash(curl -s -X POST https://api.github.com/user/repos -H \"Authorization: token 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\" -H \"Accept: application/vnd.github.v3+json\" -d '{\"\"name\"\":\"\"databankonstelalr\"\",\"\"private\"\":true,\"\"description\"\":\"\"Privacy-preserving data economy platform on Stellar\"\"}')",
+      "Bash(git add -A)"
+    ]
+  }
+}
