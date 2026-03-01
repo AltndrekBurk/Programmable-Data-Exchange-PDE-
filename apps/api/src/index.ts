@@ -2,33 +2,67 @@ import { Hono } from 'hono'
 import { serve } from '@hono/node-server'
 import { cors } from 'hono/cors'
 import { logger } from 'hono/logger'
-import { skillsRouter } from './routes/skills.js'
-import { proofsRouter } from './routes/proofs.js'
-import { consentRouter } from './routes/consent.js'
 import { authRouter } from './routes/auth.js'
-import { marketplaceRouter } from './routes/marketplace.js'
-import { providerRouter } from './routes/provider.js'
-import { escrowRouter } from './routes/escrow.js'
+import { consentRouter } from './routes/consent.js'
 import { seedRouter } from './routes/seed.js'
+import { createSkillsRouter } from './routes/skills.js'
+import { createProofsRouter } from './routes/proofs.js'
+import { createMarketplaceRouter } from './routes/marketplace.js'
+import { createProviderRouter } from './routes/provider.js'
+import { createEscrowRouter } from './routes/escrow.js'
+import { createStorageService, createEscrowAdapter } from '@dataeconomy/storage'
+
+// ---------------------------------------------------------------------------
+// Initialize storage layer
+// ---------------------------------------------------------------------------
+const { storage, cache } = createStorageService()
+const escrowAdapter = createEscrowAdapter()
 
 const app = new Hono()
 
 app.use('*', cors({ origin: process.env.FRONTEND_URL || 'http://localhost:3000' }))
 app.use('*', logger())
 
-app.get('/health', (c) => c.json({ status: 'ok', timestamp: new Date().toISOString() }))
+app.get('/health', (c) => c.json({
+  status: 'ok',
+  storageMode: process.env.STORAGE_MODE || 'memory',
+  timestamp: new Date().toISOString(),
+}))
 
+// Static routers (no storage dependency)
 app.route('/api/auth', authRouter)
-app.route('/api/skills', skillsRouter)
-app.route('/api/proofs', proofsRouter)
 app.route('/api/consent', consentRouter)
-app.route('/api/marketplace', marketplaceRouter)
-app.route('/api/provider', providerRouter)
-app.route('/api/escrow', escrowRouter)
 app.route('/api/seed', seedRouter)
 
-serve({ fetch: app.fetch, port: 3001 }, () => {
-  console.log('API running on http://localhost:3001')
-})
+// Storage-backed routers
+app.route('/api/skills', createSkillsRouter(storage))
+app.route('/api/proofs', createProofsRouter(storage))
+app.route('/api/marketplace', createMarketplaceRouter(storage))
+app.route('/api/provider', createProviderRouter(storage))
+app.route('/api/escrow', createEscrowRouter(escrowAdapter))
+
+// ---------------------------------------------------------------------------
+// Startup: rebuild warm cache from Stellar (if ipfs+stellar mode)
+// ---------------------------------------------------------------------------
+async function startup() {
+  const mode = process.env.STORAGE_MODE || 'memory'
+
+  if (mode === 'ipfs+stellar') {
+    const platformAddress = process.env.STELLAR_PLATFORM_PUBLIC
+    if (platformAddress) {
+      console.log('[startup] Rebuilding warm cache from Stellar...')
+      const count = await cache.rebuild(platformAddress)
+      console.log(`[startup] Cache rebuilt: ${count} entries`)
+    } else {
+      console.warn('[startup] STELLAR_PLATFORM_PUBLIC not set, skipping cache rebuild')
+    }
+  }
+
+  serve({ fetch: app.fetch, port: 3001 }, () => {
+    console.log(`API running on http://localhost:3001 (storage: ${mode})`)
+  })
+}
+
+startup().catch(console.error)
 
 export default app

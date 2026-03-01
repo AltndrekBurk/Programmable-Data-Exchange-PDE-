@@ -136,6 +136,84 @@ export async function getSkillJson(ipfsHash: string): Promise<SkillJson> {
 }
 
 // ---------------------------------------------------------------------------
+// Generic IPFS operations
+// ---------------------------------------------------------------------------
+
+export interface PinataMetadata {
+  name: string
+  keyvalues?: Record<string, string>
+}
+
+/**
+ * Upload any JSON document to IPFS via Pinata.
+ * Returns the IPFS CID (v0 hash, "Qm..." prefix).
+ * Throws if PINATA_JWT is not set.
+ */
+export async function uploadJson(
+  data: unknown,
+  metadata: PinataMetadata
+): Promise<string> {
+  const jwt = requireEnv('PINATA_JWT')
+
+  const body = JSON.stringify({
+    pinataContent: data,
+    pinataMetadata: {
+      name: metadata.name,
+      keyvalues: metadata.keyvalues || {},
+    },
+    pinataOptions: { cidVersion: 0 },
+  })
+
+  const response = await fetch(
+    'https://api.pinata.cloud/pinning/pinJSONToIPFS',
+    {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        Authorization: `Bearer ${jwt}`,
+      },
+      body,
+    }
+  )
+
+  if (!response.ok) {
+    const text = await response.text()
+    throw new Error(`Pinata upload failed [${response.status}]: ${text}`)
+  }
+
+  const result = (await response.json()) as PinataUploadResponse
+  return result.IpfsHash
+}
+
+/**
+ * Fetch any JSON document from IPFS via Pinata gateway.
+ * Falls back to public gateway if PINATA_GATEWAY_URL not set.
+ */
+export async function fetchJson<T = unknown>(ipfsHash: string): Promise<T> {
+  const gatewayBase =
+    process.env['PINATA_GATEWAY_URL'] ?? 'https://gateway.pinata.cloud'
+
+  const url = `${gatewayBase}/ipfs/${ipfsHash}`
+
+  const response = await fetch(url, {
+    headers: { Accept: 'application/json' },
+  })
+
+  if (!response.ok) {
+    throw new Error(`Failed to fetch IPFS [${response.status}]: ${url}`)
+  }
+
+  return (await response.json()) as T
+}
+
+/**
+ * Check if IPFS (Pinata) is available (PINATA_JWT is set).
+ */
+export function isIpfsAvailable(): boolean {
+  return !!process.env['PINATA_JWT']
+}
+
+// ---------------------------------------------------------------------------
 // Internal helpers
 // ---------------------------------------------------------------------------
 

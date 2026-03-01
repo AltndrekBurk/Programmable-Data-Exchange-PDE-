@@ -3,149 +3,111 @@ import { zValidator } from "@hono/zod-validator";
 import { z } from "zod";
 import { v4 as uuidv4 } from "uuid";
 import { generatePseudonym } from "@dataeconomy/pseudonym";
+import type { StorageService } from "@dataeconomy/storage";
 
-const marketplaceRouter = new Hono();
+export function createMarketplaceRouter(storage: StorageService) {
+  const router = new Hono();
 
-// In-memory store (TODO: replace with database)
-interface McpStandard {
-  id: string;
-  title: string;
-  description: string;
-  dataSource: string;
-  metrics: string[];
-  apiEndpoint: string;
-  authType: string;
-  responseFormat: string;
-  creator: string;
-  usageCount: number;
-  rating: number;
-  ratingCount: number;
-  ipfsHash: string;
-  createdAt: string;
-}
+  // GET /api/marketplace — List all MCP standards
+  router.get("/", async (c) => {
+    const standards = await storage.listMcps();
+    const sorted = standards.sort((a, b) => b.usageCount - a.usageCount);
+    return c.json({ standards: sorted, total: sorted.length });
+  });
 
-const mcpStore = new Map<string, McpStandard>();
+  // GET /api/marketplace/:id
+  router.get("/:id", async (c) => {
+    const id = c.req.param("id");
+    const standard = await storage.getMcp(id);
+    if (!standard) return c.json({ error: "MCP standard not found" }, 404);
+    return c.json(standard);
+  });
 
-// GET /api/marketplace — List all MCP standards
-marketplaceRouter.get("/", async (c) => {
-  const standards = Array.from(mcpStore.values()).sort(
-    (a, b) => b.usageCount - a.usageCount
-  );
-  return c.json({ standards, total: standards.length });
-});
+  const createMcpSchema = z.object({
+    title: z.string().min(3).max(200),
+    description: z.string().min(10).max(2000),
+    dataSource: z.string().min(1),
+    metrics: z.array(z.string()).min(1),
+    apiEndpoint: z.string().url(),
+    authType: z.enum(["oauth2", "api_key", "bearer", "none"]),
+    responseFormat: z.string().optional().default(""),
+  });
 
-// GET /api/marketplace/:id — Get single MCP standard
-marketplaceRouter.get("/:id", async (c) => {
-  const id = c.req.param("id");
-  const standard = mcpStore.get(id);
-  if (!standard) {
-    return c.json({ error: "MCP standard not found" }, 404);
-  }
-  return c.json(standard);
-});
-
-// POST /api/marketplace — Upload new MCP standard
-const createMcpSchema = z.object({
-  title: z.string().min(3).max(200),
-  description: z.string().min(10).max(2000),
-  dataSource: z.string().min(1),
-  metrics: z.array(z.string()).min(1),
-  apiEndpoint: z.string().url(),
-  authType: z.enum(["oauth2", "api_key", "bearer", "none"]),
-  responseFormat: z.string().optional().default(""),
-});
-
-marketplaceRouter.post(
-  "/",
-  zValidator("json", createMcpSchema),
-  async (c) => {
+  // POST /api/marketplace — Upload new MCP standard
+  router.post("/", zValidator("json", createMcpSchema), async (c) => {
     const body = c.req.valid("json");
-
     const id = uuidv4();
     const secret = process.env.PSEUDONYM_SECRET || "dev-secret";
-    // creator is pseudo_id derived from a placeholder (would be from auth header in production)
     const creator = generatePseudonym("marketplace-creator", secret).pseudonym;
 
-    const standard: McpStandard = {
+    const mcp = {
       id,
       ...body,
       creator,
       usageCount: 0,
       rating: 0,
       ratingCount: 0,
-      ipfsHash: `QmMock${id.slice(0, 8)}`,
+      ipfsHash: "",
       createdAt: new Date().toISOString(),
     };
 
-    // TODO: Upload to IPFS with Pinata
-    // TODO: Record on Stellar blockchain
-
-    mcpStore.set(id, standard);
+    const result = await storage.storeMcp(mcp);
+    mcp.ipfsHash = result.ipfsHash;
 
     return c.json(
       {
         id,
-        ipfsHash: standard.ipfsHash,
+        ipfsHash: result.ipfsHash,
+        stellarTx: result.stellarTx || null,
         status: "published",
         message: "MCP standard published to marketplace",
       },
       201
     );
-  }
-);
-
-// POST /api/marketplace/:id/use — Record usage (for per-use payment)
-marketplaceRouter.post("/:id/use", async (c) => {
-  const id = c.req.param("id");
-  const standard = mcpStore.get(id);
-  if (!standard) {
-    return c.json({ error: "MCP standard not found" }, 404);
-  }
-
-  standard.usageCount += 1;
-  mcpStore.set(id, standard);
-
-  // TODO: Trigger per-use payment to creator via Stellar contract
-
-  return c.json({
-    id,
-    usageCount: standard.usageCount,
-    message: "Usage recorded",
   });
-});
 
-// POST /api/marketplace/:id/rate — Rate MCP standard
-const rateSchema = z.object({
-  rating: z.number().min(1).max(5),
-  pseudoId: z.string().min(1),
-});
-
-marketplaceRouter.post(
-  "/:id/rate",
-  zValidator("json", rateSchema),
-  async (c) => {
+  // POST /api/marketplace/:id/use — Record usage
+  router.post("/:id/use", async (c) => {
     const id = c.req.param("id");
-    const { rating } = c.req.valid("json");
-
-    const standard = mcpStore.get(id);
-    if (!standard) {
-      return c.json({ error: "MCP standard not found" }, 404);
-    }
-
-    // Simple rolling average
-    const totalRating = standard.rating * standard.ratingCount + rating;
-    standard.ratingCount += 1;
-    standard.rating = totalRating / standard.ratingCount;
-    mcpStore.set(id, standard);
-
-    // TODO: Record rating on Stellar smart contract (feedback contract)
+    const updated = await storage.updateMcp(id, {
+      usageCount: ((await storage.getMcp(id))?.usageCount || 0) + 1,
+    });
+    if (!updated) return c.json({ error: "MCP standard not found" }, 404);
 
     return c.json({
       id,
-      rating: standard.rating,
-      ratingCount: standard.ratingCount,
+      usageCount: updated.usageCount,
+      message: "Usage recorded",
     });
-  }
-);
+  });
 
-export { marketplaceRouter };
+  // POST /api/marketplace/:id/rate
+  const rateSchema = z.object({
+    rating: z.number().min(1).max(5),
+    pseudoId: z.string().min(1),
+  });
+
+  router.post("/:id/rate", zValidator("json", rateSchema), async (c) => {
+    const id = c.req.param("id");
+    const { rating } = c.req.valid("json");
+
+    const existing = await storage.getMcp(id);
+    if (!existing) return c.json({ error: "MCP standard not found" }, 404);
+
+    const totalRating = existing.rating * existing.ratingCount + rating;
+    const newRatingCount = existing.ratingCount + 1;
+
+    const updated = await storage.updateMcp(id, {
+      rating: totalRating / newRatingCount,
+      ratingCount: newRatingCount,
+    });
+
+    return c.json({
+      id,
+      rating: updated!.rating,
+      ratingCount: updated!.ratingCount,
+    });
+  });
+
+  return router;
+}

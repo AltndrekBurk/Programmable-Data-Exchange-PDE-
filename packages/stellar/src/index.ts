@@ -143,6 +143,113 @@ export async function writeConsentTx(
 }
 
 // ---------------------------------------------------------------------------
+// Data Index — manage_data operations for IPFS hash references
+// ---------------------------------------------------------------------------
+
+/**
+ * Write an index entry to the platform account via manage_data.
+ * Key format: "sk:{id}", "mc:{id}", "pf:{id}", "pr:{id}"
+ * Value: IPFS CID (up to 64 bytes)
+ *
+ * This creates an on-chain key-value index that maps entity IDs to IPFS hashes.
+ */
+export async function writeIndexEntry(
+  keypair: Keypair,
+  key: string,
+  value: string
+): Promise<Horizon.HorizonApi.TransactionResponse> {
+  if (key.length > 64) {
+    throw new Error(`manage_data key exceeds 64 bytes: "${key}"`)
+  }
+
+  const account = await horizonServer.loadAccount(keypair.publicKey())
+
+  const tx = new TransactionBuilder(account, {
+    fee: BASE_FEE,
+    networkPassphrase: Networks.TESTNET,
+  })
+    .addOperation(
+      Operation.manageData({
+        name: key,
+        value: value,
+      })
+    )
+    .setTimeout(30)
+    .build()
+
+  tx.sign(keypair)
+
+  const result = await horizonServer.submitTransaction(tx)
+  return result as Horizon.HorizonApi.TransactionResponse
+}
+
+/**
+ * Delete an index entry (set value to null).
+ */
+export async function deleteIndexEntry(
+  keypair: Keypair,
+  key: string
+): Promise<Horizon.HorizonApi.TransactionResponse> {
+  const account = await horizonServer.loadAccount(keypair.publicKey())
+
+  const tx = new TransactionBuilder(account, {
+    fee: BASE_FEE,
+    networkPassphrase: Networks.TESTNET,
+  })
+    .addOperation(
+      Operation.manageData({
+        name: key,
+        value: null,
+      })
+    )
+    .setTimeout(30)
+    .build()
+
+  tx.sign(keypair)
+
+  const result = await horizonServer.submitTransaction(tx)
+  return result as Horizon.HorizonApi.TransactionResponse
+}
+
+/**
+ * Read all manage_data entries from an account.
+ * Returns a Map of key → decoded string value.
+ * Used for warm cache rebuild on startup.
+ */
+export async function readAccountData(
+  address: string
+): Promise<Map<string, string>> {
+  const account = await horizonServer.loadAccount(address)
+  const dataMap = new Map<string, string>()
+
+  // account.data_attr contains base64-encoded values
+  const dataAttr = (account as any).data_attr || {}
+
+  for (const [key, base64Value] of Object.entries(dataAttr)) {
+    if (typeof base64Value === 'string') {
+      const decoded = Buffer.from(base64Value, 'base64').toString('utf8')
+      dataMap.set(key, decoded)
+    }
+  }
+
+  return dataMap
+}
+
+/**
+ * Check if Stellar testnet is reachable.
+ */
+export async function isStellarAvailable(): Promise<boolean> {
+  try {
+    await horizonServer.loadAccount(
+      process.env['STELLAR_PLATFORM_PUBLIC'] || 'GAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAWHF'
+    )
+    return true
+  } catch {
+    return false
+  }
+}
+
+// ---------------------------------------------------------------------------
 // Internal helpers
 // ---------------------------------------------------------------------------
 

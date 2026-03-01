@@ -20,7 +20,8 @@
     "@dataeconomy/stellar": "*",
     "@dataeconomy/reclaim": "*",
     "@dataeconomy/ipfs": "*",
-    "@dataeconomy/pseudonym": "*"
+    "@dataeconomy/pseudonym": "*",
+    "@dataeconomy/storage": "*"
   },
   "devDependencies": {
     "tsx": "^4.19.0",

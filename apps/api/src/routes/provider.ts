@@ -2,117 +2,96 @@ import { Hono } from 'hono'
 import { z } from 'zod'
 import { zValidator } from '@hono/zod-validator'
 import { generatePseudonym } from '@dataeconomy/pseudonym'
+import type { StorageService } from '@dataeconomy/storage'
 
-export const providerRouter = new Hono()
+export function createProviderRouter(storage: StorageService) {
+  const router = new Hono()
 
-// In-memory store (TODO: replace with database)
-interface Provider {
-  pseudoId: string
-  stellarAddress: string
-  dataSources: string[]
-  openclawUrl?: string
-  channel: 'whatsapp' | 'telegram' | 'discord'
-  contactInfo: string
-  registeredAt: string
-  status: 'active' | 'inactive'
-}
+  const registerSchema = z.object({
+    stellarAddress: z.string().startsWith('G').length(56),
+    dataSources: z.array(z.string()).min(1),
+    openclawUrl: z.string().url().optional(),
+    channel: z.enum(['whatsapp', 'telegram', 'discord']),
+    contactInfo: z.string().min(1),
+  })
 
-const providerStore = new Map<string, Provider>()
+  // POST /api/provider/register
+  router.post('/register', zValidator('json', registerSchema), async (c) => {
+    const body = c.req.valid('json')
+    const secret = process.env.PSEUDONYM_SECRET || 'dev-secret-change-in-production'
+    const pseudoId = generatePseudonym(secret, body.stellarAddress).pseudonym
 
-// POST /api/provider/register
-const registerSchema = z.object({
-  stellarAddress: z.string().startsWith('G').length(56),
-  dataSources: z.array(z.string()).min(1),
-  openclawUrl: z.string().url().optional(),
-  channel: z.enum(['whatsapp', 'telegram', 'discord']),
-  contactInfo: z.string().min(1),
-})
+    await storage.storeProvider({
+      pseudoId,
+      stellarAddress: body.stellarAddress,
+      dataSources: body.dataSources,
+      openclawUrl: body.openclawUrl,
+      channel: body.channel,
+      contactInfo: body.contactInfo,
+      registeredAt: new Date().toISOString(),
+      status: 'active',
+    })
 
-providerRouter.post('/register', zValidator('json', registerSchema), async (c) => {
-  const body = c.req.valid('json')
+    return c.json({
+      status: 'registered',
+      pseudoId,
+      dataSources: body.dataSources,
+      message: 'Veri saglayici olarak kaydoldunuz',
+    }, 201)
+  })
 
-  const secret = process.env.PSEUDONYM_SECRET || 'dev-secret-change-in-production'
-  const pseudoId = generatePseudonym(secret, body.stellarAddress).pseudonym
-
-  const provider: Provider = {
-    pseudoId,
-    stellarAddress: body.stellarAddress,
-    dataSources: body.dataSources,
-    openclawUrl: body.openclawUrl,
-    channel: body.channel,
-    contactInfo: body.contactInfo,
-    registeredAt: new Date().toISOString(),
-    status: 'active',
-  }
-
-  providerStore.set(pseudoId, provider)
-
-  return c.json({
-    status: 'registered',
-    pseudoId,
-    dataSources: body.dataSources,
-    message: 'Veri saglayici olarak kaydoldunuz',
-  }, 201)
-})
-
-// GET /api/provider/list — List providers for a data source
-providerRouter.get('/list', async (c) => {
-  const dataSource = c.req.query('dataSource')
-  const providers = Array.from(providerStore.values())
-    .filter((p) => p.status === 'active')
-    .filter((p) => !dataSource || p.dataSources.includes(dataSource))
-    .map((p) => ({
+  // GET /api/provider/list
+  router.get('/list', async (c) => {
+    const dataSource = c.req.query('dataSource')
+    const providers = await storage.listProviders(dataSource || undefined)
+    const mapped = providers.map((p) => ({
       pseudoId: p.pseudoId,
       dataSources: p.dataSources,
       channel: p.channel,
       registeredAt: p.registeredAt,
     }))
-
-  return c.json({ providers, total: providers.length })
-})
-
-// GET /api/provider/me — Get own provider profile
-providerRouter.get('/me', async (c) => {
-  const address = c.req.query('address')
-  if (!address) return c.json({ error: 'address query param required' }, 400)
-
-  const secret = process.env.PSEUDONYM_SECRET || 'dev-secret-change-in-production'
-  const pseudoId = generatePseudonym(secret, address).pseudonym
-  const provider = providerStore.get(pseudoId)
-
-  if (!provider) {
-    return c.json({ registered: false })
-  }
-
-  return c.json({ registered: true, ...provider })
-})
-
-// In-memory bot config store
-const botConfigStore = new Map<string, { openclawUrl: string; openclawToken: string }>()
-
-// POST /api/provider/bot-config — Save OpenClaw bot config
-const botConfigSchema = z.object({
-  stellarAddress: z.string().startsWith('G').length(56),
-  openclawUrl: z.string().url(),
-  openclawToken: z.string().min(1),
-})
-
-providerRouter.post('/bot-config', zValidator('json', botConfigSchema), async (c) => {
-  const body = c.req.valid('json')
-  const secret = process.env.PSEUDONYM_SECRET || 'dev-secret-change-in-production'
-  const pseudoId = generatePseudonym(secret, body.stellarAddress).pseudonym
-
-  botConfigStore.set(pseudoId, {
-    openclawUrl: body.openclawUrl,
-    openclawToken: body.openclawToken,
+    return c.json({ providers: mapped, total: mapped.length })
   })
 
-  // Also update provider record if exists
-  const provider = providerStore.get(pseudoId)
-  if (provider) {
-    provider.openclawUrl = body.openclawUrl
-    providerStore.set(pseudoId, provider)
-  }
+  // GET /api/provider/me
+  router.get('/me', async (c) => {
+    const address = c.req.query('address')
+    if (!address) return c.json({ error: 'address query param required' }, 400)
 
-  return c.json({ status: 'saved', pseudoId })
-})
+    const secret = process.env.PSEUDONYM_SECRET || 'dev-secret-change-in-production'
+    const pseudoId = generatePseudonym(secret, address).pseudonym
+    const provider = await storage.getProvider(pseudoId)
+
+    if (!provider) return c.json({ registered: false })
+    return c.json({ registered: true, ...provider })
+  })
+
+  // POST /api/provider/bot-config
+  const botConfigSchema = z.object({
+    stellarAddress: z.string().startsWith('G').length(56),
+    openclawUrl: z.string().url(),
+    openclawToken: z.string().min(1),
+  })
+
+  router.post('/bot-config', zValidator('json', botConfigSchema), async (c) => {
+    const body = c.req.valid('json')
+    const secret = process.env.PSEUDONYM_SECRET || 'dev-secret-change-in-production'
+    const pseudoId = generatePseudonym(secret, body.stellarAddress).pseudonym
+
+    await storage.storeBotConfig({
+      pseudoId,
+      openclawUrl: body.openclawUrl,
+      openclawToken: body.openclawToken,
+    })
+
+    // Update provider if exists
+    const provider = await storage.getProvider(pseudoId)
+    if (provider) {
+      await storage.storeProvider({ ...provider, openclawUrl: body.openclawUrl })
+    }
+
+    return c.json({ status: 'saved', pseudoId })
+  })
+
+  return router
+}
