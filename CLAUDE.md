@@ -162,6 +162,12 @@ Web API'si olan her kaynak MVP kapsamında — onay sürecinden geçer.
   - src/hooks/useFreighter.ts — Freighter bağlantı + imzalama hook
   - src/app/(auth)/login/page.tsx — 4 adımlı wallet connect akışı
   - NextAuth: Stellar CredentialsProvider (email/password kaldırıldı)
+- apps/web sayfalar — provider, proofs, escrow, dashboard (OpenClaw + LLM proof)
+- apps/api — provider route (register, list, me, bot-config)
+- apps/api — proofs route (submit, llm-verify, list, :skillId)
+- AGENT.md — OpenClaw entegrasyon kılavuzu (v1.0)
+- Stellar testnet hesabı oluşturuldu (GBF32...LG6K)
+- GitHub private repo: https://github.com/AltndrekBurk/databankonstelalr
 
 ## Auth Akışı (Stellar Wallet)
 
@@ -233,13 +239,47 @@ Token/tokenomics — önce ürün çalışsın.
 
 ## Teknik Riskler
 
-Reclaim custom provider yazımı — birkaç günlük iş, MVP'ye başlamadan öğren.
+~~Reclaim custom provider yazımı~~ → Aşağıdaki KRİTİK AŞAMA'ya bak.
 
 ~~Soroban USDC işlemleri~~ **ÇÖZÜLDÜ:** `token::TokenClient::new(&env, &usdc_sac_id)` ile SEP-41 arayüzü.
 
 ~~OpenClaw programatik mesaj~~ **ÇÖZÜLDÜ:** `/hooks/agent` endpoint'i ile mümkün.
 
 MCP marketplace geri bildirim kontratı henüz tasarlanmadı — escrow pattern'i üzerine inşa edilebilir.
+
+---
+
+## ⚠️ KRİTİK AŞAMA: ZK-TLS Proof Sistemi (Simüle)
+
+**Durum:** Şu an tüm ZK proof'lar SİMÜLE edilmiş durumda. Gerçek ZK-TLS kanıtı üretilmiyor.
+
+**Sorun:** Reclaim Protocol'ün hosted sistemi projemize uymuyor:
+1. APP_ID modeli: Her veri kaynağı için ayrı APP_ID almak gerekiyor (per-app provider)
+2. Mobil uygulama zorunluluğu: QR kod taratıp mobil Reclaim app'ten onay gerekiyor
+3. Bizim model: Kullanıcı herhangi bir web API'sine bağlanabilmeli, tek tek APP_ID almadan
+
+**Çözüm:** Self-hosted `attestor-core` deploy etmek.
+- Repo: https://github.com/reclaimprotocol/attestor-core
+- APP_ID gerektirmez, standalone çalışır
+- Sadece PRIVATE_KEY ile başlatılır, port 8001'de dinler
+- zkFetch bu attestor'a yönlendirilir (Reclaim hosted yerine)
+
+**Aktivasyon Adımları:**
+```
+1. git clone https://github.com/reclaimprotocol/attestor-core
+2. cd attestor-core && npm install
+3. .env dosyasına PRIVATE_KEY=<ed25519-private-key> ekle
+4. npm run start:tsc  → port 8001'de çalışır
+5. packages/reclaim/src/index.ts → zkFetch attestor URL'ini kendi sunucumuza yönlendir
+6. Gerçek API'lere zkFetch çağrısı yap → gerçek ZK-TLS proof üret
+```
+
+**Etkilenen dosyalar:**
+- `packages/reclaim/src/index.ts` — zkFetch attestor config
+- `apps/api/src/routes/proofs.ts` — simüle proof → gerçek proof
+- `apps/web/src/app/dashboard/page.tsx` — LLM proof bölümü
+
+**Öncelik:** Bu, MVP'nin en kritik blocker'ı. Attestor-core deploy edilmeden gerçek veri doğrulaması yapılamaz.
 
 ---
 
@@ -276,7 +316,8 @@ dataEconomy/                      ← monorepo root (npm workspaces)
 ├── .claude/agents/               Ajan tanımları (3 ajan)
 ├── CLAUDE.md                     Bu dosya
 ├── FLOW.md                       Detaylı akış
-└── AGENT.md                      OpenClaw için direktifler (TODO)
+├── AGENT.md                      OpenClaw entegrasyon kılavuzu (v1.0, 739 satır)
+└── .env.local                    Stellar keys, pseudonym secret (git'e girmez)
 ```
 
 ## Önemli Sabitler
@@ -321,3 +362,10 @@ MCP marketplace içeriği IPFS'te, metadata blockchain'de.
                      OpenZeppelin Relayer x402 Plugin eklendi.
                      Native ZK Proofs (Protocol 25 X-Ray: BN254+Poseidon) keşfedildi.
                      Tüm ödeme altyapısı Stellar ağında birleştirildi.
+2026-03-01 — v1.1 — Provider, proofs, escrow sayfaları oluşturuldu.
+                     Dashboard: OpenClaw bot + LLM proof bölümü eklendi.
+                     Stellar testnet hesabı (GBF32...LG6K) oluşturuldu.
+                     AGENT.md v1.0 yazıldı (739 satır OpenClaw kılavuzu).
+                     GitHub private repo push edildi.
+                     KRİTİK AŞAMA: ZK-TLS proof sistemi simüle.
+                     Çözüm: self-hosted attestor-core (APP_ID gerektirmez).

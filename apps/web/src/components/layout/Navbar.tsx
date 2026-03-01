@@ -9,6 +9,8 @@ const navLinks = [
   { href: "/marketplace", label: "Marketplace" },
   { href: "/skills/create", label: "Veri Talep Et" },
   { href: "/tasks", label: "Gorevler" },
+  { href: "/escrow", label: "Escrow" },
+  { href: "/proofs", label: "Proofs" },
   { href: "/provider", label: "Saglayici Ol" },
 ];
 
