@@ -7,6 +7,7 @@ import { proofsRouter } from './routes/proofs.js'
 import { consentRouter } from './routes/consent.js'
 import { authRouter } from './routes/auth.js'
 import { marketplaceRouter } from './routes/marketplace.js'
+import { providerRouter } from './routes/provider.js'
 
 const app = new Hono()
 
@@ -20,6 +21,7 @@ app.route('/api/skills', skillsRouter)
 app.route('/api/proofs', proofsRouter)
 app.route('/api/consent', consentRouter)
 app.route('/api/marketplace', marketplaceRouter)
+app.route('/api/provider', providerRouter)
 
 serve({ fetch: app.fetch, port: 3001 }, () => {
   console.log('API running on http://localhost:3001')

@@ -10,7 +10,7 @@ export default function AuthLayout({ children }: AuthLayoutProps) {
       <div className="sm:mx-auto sm:w-full sm:max-w-md">
         <div className="text-center mb-8">
           <h1 className="text-3xl font-bold text-gray-900">dataEconomy</h1>
-          <p className="mt-2 text-sm text-gray-600">Data-driven insights platform</p>
+          <p className="mt-2 text-sm text-gray-600">Privacy-preserving data economy on Stellar</p>
         </div>
       </div>
       <div className="sm:mx-auto sm:w-full sm:max-w-md">

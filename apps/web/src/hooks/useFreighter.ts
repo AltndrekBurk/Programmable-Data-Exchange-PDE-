@@ -19,30 +19,33 @@ export function useFreighter() {
   const connect = useCallback(async (): Promise<string | null> => {
     try {
       const mod = await import("@stellar/freighter-api");
-      const freighter = mod.freighterApi || mod;
+      // @stellar/freighter-api v6 exports named functions directly.
+      // Older builds shim them under `freighterApi`.
+      const freighter = (mod as Record<string, unknown>).freighterApi ?? mod;
 
-      const { isConnected } = await freighter.isConnected();
+      const { isConnected } = await (freighter as { isConnected: () => Promise<{ isConnected: boolean }> }).isConnected();
       if (!isConnected) {
         setState((s) => ({
           ...s,
           isInstalled: false,
-          error: "Freighter yüklü değil. freighter.app adresinden indir.",
+          error: "Freighter yuklu degil. freighter.app adresinden indir.",
         }));
         return null;
       }
 
-      // Erişim izni iste
-      const { isAllowed } = await freighter.isAllowed();
+      setState((s) => ({ ...s, isInstalled: true }));
+
+      // Request wallet access if not yet allowed
+      const { isAllowed } = await (freighter as { isAllowed: () => Promise<{ isAllowed: boolean }> }).isAllowed();
       if (!isAllowed) {
-        await freighter.requestAccess();
+        await (freighter as { requestAccess: () => Promise<unknown> }).requestAccess();
       }
 
-      const { address } = await freighter.getAddress();
+      const { address } = await (freighter as { getAddress: () => Promise<{ address: string }> }).getAddress();
       if (!address) {
         setState((s) => ({
           ...s,
-          isInstalled: true,
-          error: "Cüzdan adresi alınamadı",
+          error: "Cuzdan adresi alinamadi",
         }));
         return null;
       }
@@ -55,40 +58,62 @@ export function useFreighter() {
       });
       return address;
     } catch (err) {
-      const msg = err instanceof Error ? err.message : "Cüzdan bağlanamadı";
+      const msg = err instanceof Error ? err.message : "Cuzdan baglanamadi";
       setState((s) => ({ ...s, error: msg }));
       return null;
     }
   }, []);
 
+  /**
+   * Signs a challenge string with the Freighter wallet.
+   *
+   * Security note: the previous implementation had a SHA-256 fallback that
+   * produced a hash of the challenge — NOT a real cryptographic signature.
+   * The backend Ed25519 verifier would always reject it. That fallback has
+   * been removed. If signMessage is unavailable the user receives a clear
+   * actionable error instead of a silent auth failure.
+   *
+   * Freighter v5+: signMessage(message, { networkPassphrase }) -> { signedMessage: string }
+   * The returned value is a base64-encoded raw Ed25519 signature over the
+   * UTF-8 bytes of the challenge string.
+   */
   const signChallenge = useCallback(
     async (challenge: string): Promise<string | null> => {
       try {
         const mod = await import("@stellar/freighter-api");
-        const freighter = mod.freighterApi || mod;
+        const freighter = (mod as Record<string, unknown>).freighterApi ?? mod;
 
-        // signMessage desteğini kontrol et
-        if (typeof freighter.signMessage === "function") {
-          try {
-            const result = await freighter.signMessage(challenge, {
-              networkPassphrase: "Test SDF Network ; September 2015",
-            });
-            if (result?.signedMessage) return result.signedMessage;
-          } catch (signErr) {
-            console.warn("[freighter] signMessage failed, using fallback:", signErr);
-          }
+        if (typeof (freighter as Record<string, unknown>).signMessage !== "function") {
+          setState((s) => ({
+            ...s,
+            error:
+              "Freighter surumunuz signMessage desteklemiyor. " +
+              "Lutfen Freighter uzantisini guncelleyin (v5.0+).",
+          }));
+          return null;
         }
 
-        // Fallback: signMessage yoksa veya başarısızsa,
-        // challenge'ın base64 hash'ini imza olarak kullan (testnet MVP)
-        const encoder = new TextEncoder();
-        const data = encoder.encode(challenge);
-        const hashBuffer = await crypto.subtle.digest("SHA-256", data);
-        const hashArray = Array.from(new Uint8Array(hashBuffer));
-        const fallbackSig = btoa(String.fromCharCode(...hashArray));
-        return fallbackSig;
+        const result = await (
+          freighter as {
+            signMessage: (
+              msg: string,
+              opts: { networkPassphrase: string }
+            ) => Promise<{ signedMessage?: string; error?: string }>;
+          }
+        ).signMessage(challenge, {
+          networkPassphrase: "Test SDF Network ; September 2015",
+        });
+
+        if (!result?.signedMessage) {
+          const detail = result?.error ?? "Imzalama iptal edildi veya basarisiz oldu";
+          setState((s) => ({ ...s, error: detail }));
+          return null;
+        }
+
+        return result.signedMessage;
       } catch (err) {
-        const msg = err instanceof Error ? err.message : "İmzalama başarısız";
+        const msg =
+          err instanceof Error ? err.message : "Imzalama sirasinda hata olustu";
         setState((s) => ({ ...s, error: msg }));
         return null;
       }

@@ -30,7 +30,13 @@
       "Bash(npx -y gh)",
       "Bash(npm ls -g)",
       "Bash(curl -s -X POST https://api.github.com/user/repos -H \"Authorization: token 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\" -H \"Accept: application/vnd.github.v3+json\" -d '{\"\"name\"\":\"\"databankonstelalr\"\",\"\"private\"\":true,\"\"description\"\":\"\"Privacy-preserving data economy platform on Stellar\"\"}')",
-      "Bash(git add -A)"
+      "Bash(git add -A)",
+      "Bash(git commit:*)",
+      "Bash(git rm -r --cached apps/web/.next)",
+      "Bash(git add .gitignore)",
+      "Bash(git push)",
+      "mcp__Claude_Preview__preview_start",
+      "Bash(npm --version)"
     ]
   }
 }

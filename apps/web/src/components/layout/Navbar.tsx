@@ -9,6 +9,7 @@ const navLinks = [
   { href: "/marketplace", label: "Marketplace" },
   { href: "/skills/create", label: "Veri Talep Et" },
   { href: "/tasks", label: "Gorevler" },
+  { href: "/provider", label: "Saglayici Ol" },
 ];
 
 export default function Navbar() {

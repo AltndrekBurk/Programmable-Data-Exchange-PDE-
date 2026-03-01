@@ -64,6 +64,16 @@ proofsRouter.post('/submit', zValidator('json', submitProofSchema), async (c) =>
     .update(JSON.stringify(body.proof))
     .digest('hex')
 
+  // Store proof record
+  proofStore.push({
+    proofHash,
+    skillId: body.skillId,
+    provider: body.proof.claimData.provider,
+    metric: body.proof.claimData.parameters,
+    status: 'verified',
+    timestamp: new Date().toISOString(),
+  })
+
   // TODO: Write proof hash to Stellar
   // TODO: Trigger Soroban escrow release()
 
@@ -78,9 +88,24 @@ proofsRouter.post('/submit', zValidator('json', submitProofSchema), async (c) =>
   })
 })
 
+// In-memory proof store (TODO: database)
+const proofStore: Array<{
+  proofHash: string
+  skillId: string
+  provider: string
+  metric: string
+  status: 'verified' | 'failed' | 'pending'
+  timestamp: string
+}> = []
+
+// GET /api/proofs/list — All proofs
+proofsRouter.get('/list', async (c) => {
+  return c.json({ proofs: proofStore, total: proofStore.length })
+})
+
 // GET /api/proofs/:skillId
 proofsRouter.get('/:skillId', async (c) => {
   const skillId = c.req.param('skillId')
-  // TODO: Fetch from proof store
-  return c.json({ skillId, proofs: [], status: 'pending' })
+  const filtered = proofStore.filter((p) => p.skillId === skillId)
+  return c.json({ skillId, proofs: filtered, status: filtered.length > 0 ? 'has_proofs' : 'pending' })
 })

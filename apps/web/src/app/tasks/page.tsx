@@ -5,6 +5,7 @@ import { useRouter } from "next/navigation";
 import { useEffect, useState } from "react";
 import { apiFetch } from "@/lib/api";
 import Button from "@/components/ui/Button";
+import { useToast } from "@/components/ui/Toast";
 
 interface Task {
   id: string;
@@ -18,9 +19,22 @@ interface Task {
   expiresAt: string;
 }
 
+// Shape returned by GET /api/skills
+interface SkillItem {
+  id: string;
+  title: string;
+  dataSource: string;
+  metrics?: string[];
+  rewardPerUser: number;
+  durationDays?: number;
+  status: string;
+  expiresAt: string;
+}
+
 export default function TasksPage() {
   const { data: session, status } = useSession();
   const router = useRouter();
+  const { toast } = useToast();
   const [tasks, setTasks] = useState<Task[]>([]);
   const [loading, setLoading] = useState(true);
   const [actionLoading, setActionLoading] = useState<string | null>(null);
@@ -30,22 +44,33 @@ export default function TasksPage() {
   }, [status, router]);
 
   useEffect(() => {
-    if (status === "authenticated") {
-      apiFetch<{ skills: Task[] }>("/api/skills")
-        .then((data) => {
-          setTasks(
-            (data.skills || []).map((s) => ({
-              ...s,
-              skillId: s.id,
-              status: "pending" as const,
-              durationDays: 30,
-            }))
-          );
-        })
-        .catch(() => setTasks([]))
-        .finally(() => setLoading(false));
-    }
-  }, [status]);
+    if (status !== "authenticated") return;
+
+    // GET /api/skills returns all active skills — from the user perspective
+    // these are candidate tasks. A dedicated /api/tasks endpoint would filter
+    // by pseudoId, but until that exists we use /api/skills and mark all pending.
+    apiFetch<{ skills: SkillItem[] }>("/api/skills")
+      .then((data) => {
+        const mapped: Task[] = (data.skills || []).map((s) => ({
+          id: s.id,
+          skillId: s.id,
+          title: s.title,
+          dataSource: s.dataSource,
+          metrics: s.metrics ?? [],
+          rewardPerUser: s.rewardPerUser,
+          durationDays: s.durationDays ?? 30,
+          status: "pending" as const,
+          expiresAt: s.expiresAt,
+        }));
+        setTasks(mapped);
+      })
+      .catch((err: unknown) => {
+        const msg = err instanceof Error ? err.message : "Gorevler yuklenemedi";
+        toast(msg, "error");
+        setTasks([]);
+      })
+      .finally(() => setLoading(false));
+  }, [status, toast]);
 
   const handleDecision = async (
     skillId: string,
@@ -55,6 +80,7 @@ export default function TasksPage() {
     setActionLoading(skillId);
 
     try {
+      // POST /api/consent/record — writes decision to Stellar blockchain
       await apiFetch("/api/consent/record", {
         method: "POST",
         body: JSON.stringify({
@@ -67,15 +93,21 @@ export default function TasksPage() {
       setTasks((prev) =>
         prev.map((t) =>
           t.skillId === skillId
-            ? {
-                ...t,
-                status: decision === "ACCEPT" ? "accepted" : "rejected",
-              }
+            ? { ...t, status: decision === "ACCEPT" ? "accepted" : "rejected" }
             : t
         )
       );
-    } catch {
-      // silently fail — could show toast
+
+      toast(
+        decision === "ACCEPT"
+          ? "Gorev kabul edildi. Proof sureci basliyor."
+          : "Gorev reddedildi.",
+        decision === "ACCEPT" ? "success" : "info"
+      );
+    } catch (err) {
+      const msg =
+        err instanceof Error ? err.message : "Karar kaydedilemedi";
+      toast(msg, "error");
     } finally {
       setActionLoading(null);
     }
@@ -116,34 +148,39 @@ export default function TasksPage() {
                 key={task.skillId}
                 className="rounded-lg border border-yellow-200 bg-yellow-50 p-4"
               >
-                <div className="flex items-start justify-between">
-                  <div>
-                    <h3 className="text-sm font-semibold text-gray-900">
+                <div className="flex items-start justify-between gap-4">
+                  <div className="min-w-0">
+                    <h3 className="text-sm font-semibold text-gray-900 truncate">
                       {task.title}
                     </h3>
                     <p className="text-xs text-gray-500 mt-1">
-                      {task.dataSource} — {task.metrics?.join(", ")} —{" "}
-                      {task.rewardPerUser} USDC
+                      {task.dataSource}
+                      {task.metrics.length > 0 && ` — ${task.metrics.join(", ")}`}
+                      {" — "}
+                      <span className="font-medium text-gray-700">
+                        {task.rewardPerUser} USDC
+                      </span>
+                    </p>
+                    <p className="text-xs text-gray-400 mt-0.5">
+                      Sure: {task.durationDays} gun
                     </p>
                   </div>
-                  <div className="flex gap-2 ml-4">
+                  <div className="flex gap-2 shrink-0">
                     <Button
                       size="sm"
                       variant="primary"
+                      disabled={actionLoading !== null}
                       isLoading={actionLoading === task.skillId}
-                      onClick={() =>
-                        handleDecision(task.skillId, "ACCEPT")
-                      }
+                      onClick={() => handleDecision(task.skillId, "ACCEPT")}
                     >
                       Kabul
                     </Button>
                     <Button
                       size="sm"
                       variant="outline"
+                      disabled={actionLoading !== null}
                       isLoading={actionLoading === task.skillId}
-                      onClick={() =>
-                        handleDecision(task.skillId, "REJECT")
-                      }
+                      onClick={() => handleDecision(task.skillId, "REJECT")}
                     >
                       Red
                     </Button>
@@ -155,7 +192,7 @@ export default function TasksPage() {
         </section>
       )}
 
-      {/* Active */}
+      {/* Active / Accepted */}
       {active.length > 0 && (
         <section className="mb-8">
           <h2 className="text-sm font-semibold text-gray-500 uppercase tracking-wide mb-3">
@@ -167,13 +204,28 @@ export default function TasksPage() {
                 key={task.skillId}
                 className="rounded-lg border border-green-200 bg-green-50 p-4"
               >
-                <h3 className="text-sm font-semibold text-gray-900">
-                  {task.title}
-                </h3>
-                <p className="text-xs text-gray-500 mt-1">
-                  {task.dataSource} — {task.rewardPerUser} USDC — Kabul
-                  edildi, proof bekleniyor
-                </p>
+                <div className="flex items-center justify-between gap-4">
+                  <div>
+                    <h3 className="text-sm font-semibold text-gray-900">
+                      {task.title}
+                    </h3>
+                    <p className="text-xs text-gray-500 mt-1">
+                      {task.dataSource} — {task.rewardPerUser} USDC —{" "}
+                      {task.status === "completed"
+                        ? "Tamamlandi, odeme bekleniyor"
+                        : "Kabul edildi, proof bekleniyor"}
+                    </p>
+                  </div>
+                  <span
+                    className={`inline-flex items-center rounded-full px-2 py-1 text-xs font-medium ${
+                      task.status === "completed"
+                        ? "bg-blue-50 text-blue-700"
+                        : "bg-green-100 text-green-700"
+                    }`}
+                  >
+                    {task.status === "completed" ? "Tamamlandi" : "Aktif"}
+                  </span>
+                </div>
               </div>
             ))}
           </div>
@@ -205,6 +257,10 @@ export default function TasksPage() {
       {tasks.length === 0 && (
         <div className="text-center py-16">
           <p className="text-sm text-gray-500">Henuz gorev yok.</p>
+          <p className="text-xs text-gray-400 mt-2">
+            OpenClaw kurulduktan sonra gorevler WhatsApp/Telegram uzerinden de
+            bildirilir.
+          </p>
         </div>
       )}
     </div>
