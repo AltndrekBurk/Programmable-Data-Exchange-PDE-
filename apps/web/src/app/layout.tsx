@@ -28,13 +28,11 @@ export default function RootLayout({
 }>) {
   return (
     <html lang="en">
-      <body
-        className={`${geistSans.variable} ${geistMono.variable} antialiased`}
-      >
+      <body className={`${geistSans.variable} ${geistMono.variable} antialiased`}>
         <SessionProvider>
           <ToastProvider>
             <Navbar />
-            <main>{children}</main>
+            <main className="min-h-[calc(100vh-4rem)]">{children}</main>
           </ToastProvider>
         </SessionProvider>
       </body>

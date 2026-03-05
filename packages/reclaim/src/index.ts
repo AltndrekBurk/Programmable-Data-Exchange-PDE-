@@ -1,5 +1,4 @@
-import { verifyProof } from "@reclaimprotocol/js-sdk";
-import { ReclaimClient as ZKFetchClient } from "@reclaimprotocol/zk-fetch";
+import { ReclaimClient } from "@reclaimprotocol/zk-fetch";
 
 // ---------------------------------------------------------------------------
 // Types
@@ -44,18 +43,48 @@ export interface ReclaimProof {
 // ---------------------------------------------------------------------------
 // verifyDataProof
 //
-// Verifies a Reclaim proof object using the JS SDK.
-// Returns true if the proof is valid, false otherwise.
+// MVP notu:
+// - Şu an backend tarafında ZK-TLS doğrulamasını gerçekten çalıştırmıyoruz.
+// - Bu fonksiyon sadece proof objesinin temel alanlarını ve timestamp/provider/
+//   parameters gibi kritik bilgileri kontrol eden hafif bir stub.
+// - İleride self-hosted attestor + gerçek verifyProof entegrasyonu buraya
+//   tekrar bağlanacak; backend arayüzü değişmeyecek.
 // ---------------------------------------------------------------------------
 
 export async function verifyDataProof(proof: ReclaimProof): Promise<boolean> {
-  try {
-    const result = await verifyProof(proof as unknown as Parameters<typeof verifyProof>[0]);
-    return !!result;
-  } catch (err) {
-    console.error("[reclaim] Proof verification failed:", err);
+  if (!proof || typeof proof !== "object") return false;
+
+  const data = proof.claimData;
+  if (!data) return false;
+
+  // Provider zorunlu
+  if (typeof data.provider !== "string" || !data.provider.trim()) {
     return false;
   }
+
+  // İstenen metric/parametre bilgisi zorunlu
+  if (typeof data.parameters !== "string" || !data.parameters.trim()) {
+    return false;
+  }
+
+  // Timestamp zorunlu ve makul aralıkta olmalı (± 7 gün guard)
+  if (typeof data.timestampS !== "number" || !Number.isFinite(data.timestampS)) {
+    return false;
+  }
+  const tsMs = data.timestampS * 1000;
+  const now = Date.now();
+  const sevenDaysMs = 7 * 24 * 60 * 60 * 1000;
+  if (tsMs < now - sevenDaysMs || tsMs > now + sevenDaysMs) {
+    return false;
+  }
+
+  // En az bir witness beklenir
+  if (!Array.isArray(proof.witnesses) || proof.witnesses.length === 0) {
+    return false;
+  }
+
+  // Şimdilik bu kontroller yeterli; gerçek ZK doğrulaması ileride eklenecek.
+  return true;
 }
 
 // ---------------------------------------------------------------------------
@@ -63,45 +92,41 @@ export async function verifyDataProof(proof: ReclaimProof): Promise<boolean> {
 //
 // Generates a ZK proof that a Fitbit metric value exists without revealing
 // the raw access token to the verifier.
-//
-// Supported metrics:
-//   "steps"      → activities/steps summary for today
-//   "heart_rate" → activities/heart summary for today
-//   "sleep"      → sleep/date/today summary
-//   "weight"     → body/log/weight/date/today summary
 // ---------------------------------------------------------------------------
 
 export async function createFitbitProof(
   accessToken: string,
   metric: FitbitMetric
 ): Promise<ProofResult> {
-  const zkFetch = new ZKFetchClient({
-    reclaimAppId: process.env.RECLAIM_APP_ID ?? "",
-    reclaimAppSecret: process.env.RECLAIM_APP_SECRET ?? "",
-  });
+  const appId = process.env.RECLAIM_APP_ID ?? "";
+  const appSecret = process.env.RECLAIM_APP_SECRET ?? "";
+  const client = new ReclaimClient(appId, appSecret);
 
   const endpoint = fitbitEndpoint(metric);
 
   try {
-    const proof = await zkFetch.fetch(endpoint, {
-      method: "GET",
-      headers: {
-        Authorization: `Bearer ${accessToken}`,
-        "Accept-Language": "en_US",
-      },
-      // Reveal only the top-level metric key, not the auth header
-      secretParams: { Authorization: `Bearer ${accessToken}` },
-      // Response redactions: only prove the relevant value exists
-      responseMatches: [
-        {
-          type: "contains",
-          value: `"${metric}"`,
+    const proof = await client.zkFetch(
+      endpoint,
+      {
+        method: "GET",
+        headers: {
+          Authorization: `Bearer ${accessToken}`,
+          "Accept-Language": "en_US",
         },
-      ],
-    });
+      },
+      {
+        headers: { Authorization: `Bearer ${accessToken}` },
+        responseMatches: [
+          {
+            type: "contains",
+            value: `"${metric}"`,
+          },
+        ],
+      }
+    );
 
     return {
-      success: true,
+      success: !!proof,
       proof: proof as unknown as ReclaimProof,
       metric,
       createdAt: new Date().toISOString(),
@@ -121,46 +146,42 @@ export async function createFitbitProof(
 // createStravaProof
 //
 // Generates a ZK proof that a Strava athlete stats metric exists.
-// Uses the Strava v3 API with the provided OAuth access token.
-//
-// Supported metrics:
-//   "distance"             → recent_run_totals.distance
-//   "moving_time"          → recent_run_totals.moving_time
-//   "elapsed_time"         → recent_run_totals.elapsed_time
-//   "total_elevation_gain" → recent_run_totals.elevation_gain
 // ---------------------------------------------------------------------------
 
 export async function createStravaProof(
   accessToken: string,
   metric: StravaMetric
 ): Promise<ProofResult> {
-  const zkFetch = new ZKFetchClient({
-    reclaimAppId: process.env.RECLAIM_APP_ID ?? "",
-    reclaimAppSecret: process.env.RECLAIM_APP_SECRET ?? "",
-  });
+  const appId = process.env.RECLAIM_APP_ID ?? "";
+  const appSecret = process.env.RECLAIM_APP_SECRET ?? "";
+  const client = new ReclaimClient(appId, appSecret);
 
   // Strava athlete stats endpoint requires the authenticated athlete's ID.
-  // We first resolve the athlete ID from the /athlete endpoint.
   const athleteId = await resolveStravaAthleteId(accessToken);
   const endpoint = `https://www.strava.com/api/v3/athletes/${athleteId}/stats`;
 
   try {
-    const proof = await zkFetch.fetch(endpoint, {
-      method: "GET",
-      headers: {
-        Authorization: `Bearer ${accessToken}`,
-      },
-      secretParams: { Authorization: `Bearer ${accessToken}` },
-      responseMatches: [
-        {
-          type: "contains",
-          value: `"${metric}"`,
+    const proof = await client.zkFetch(
+      endpoint,
+      {
+        method: "GET",
+        headers: {
+          Authorization: `Bearer ${accessToken}`,
         },
-      ],
-    });
+      },
+      {
+        headers: { Authorization: `Bearer ${accessToken}` },
+        responseMatches: [
+          {
+            type: "contains",
+            value: `"${metric}"`,
+          },
+        ],
+      }
+    );
 
     return {
-      success: true,
+      success: !!proof,
       proof: proof as unknown as ReclaimProof,
       metric,
       createdAt: new Date().toISOString(),

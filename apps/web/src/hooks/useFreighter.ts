@@ -1,5 +1,6 @@
-"use client";
+ "use client";
 import { useState, useCallback } from "react";
+import StellarSdk from "@stellar/stellar-sdk";
 
 export type FreighterState = {
   isInstalled: boolean;
@@ -7,6 +8,12 @@ export type FreighterState = {
   publicKey: string | null;
   error: string | null;
 };
+
+const HORIZON_URL = "https://horizon-testnet.stellar.org";
+
+function compactId(id: string): string {
+  return id.replace(/-/g, "").slice(0, 4);
+}
 
 export function useFreighter() {
   const [state, setState] = useState<FreighterState>({
@@ -98,19 +105,21 @@ export function useFreighter() {
             signMessage: (
               msg: string,
               opts: { networkPassphrase: string }
-            ) => Promise<{ signedMessage?: string; error?: string }>;
+            ) => Promise<{ signedMessage?: string; signature?: string; error?: string }>;
           }
         ).signMessage(challenge, {
           networkPassphrase: "Test SDF Network ; September 2015",
         });
 
-        if (!result?.signedMessage) {
+        const sig = result?.signature ?? result?.signedMessage;
+        if (!sig) {
           const detail = result?.error ?? "Imzalama iptal edildi veya basarisiz oldu";
           setState((s) => ({ ...s, error: detail }));
           return null;
         }
 
-        return result.signedMessage;
+        // Backend base64 veya hex imzayı destekliyor; olduğu gibi geri dön.
+        return sig;
       } catch (err) {
         const msg =
           err instanceof Error ? err.message : "Imzalama sirasinda hata olustu";
@@ -121,5 +130,75 @@ export function useFreighter() {
     []
   );
 
-  return { ...state, connect, signChallenge };
+  const signAndSubmitConsentTx = useCallback(
+    async (
+      fullSkillId: string,
+      pseudoId: string,
+      publicKey: string,
+      decision: "ACCEPT" | "REJECT"
+    ): Promise<string | null> => {
+      if (decision !== "ACCEPT") return null;
+      try {
+        const mod = await import("@stellar/freighter-api");
+        const freighter = (mod as Record<string, unknown>).freighterApi ?? mod;
+
+        if (typeof (freighter as Record<string, unknown>).signTransaction !== "function") {
+          setState((s) => ({
+            ...s,
+            error:
+              "Freighter surumunuz signTransaction desteklemiyor. Lutfen guncelleyiniz.",
+          }));
+          return null;
+        }
+
+        const server = new StellarSdk.Horizon.Server(HORIZON_URL);
+        const account = await server.loadAccount(publicKey);
+
+        const skillId4 = compactId(fullSkillId);
+        const pseudo4 = compactId(pseudoId || publicKey);
+        const memoText = `CONSENT:${skillId4}:${pseudo4}:${decision}`;
+
+        const tx = new StellarSdk.TransactionBuilder(account, {
+          fee: StellarSdk.BASE_FEE,
+          networkPassphrase: StellarSdk.Networks.TESTNET,
+        })
+          .addMemo(StellarSdk.Memo.text(memoText))
+          .addOperation(
+            StellarSdk.Operation.payment({
+              destination: publicKey,
+              asset: StellarSdk.Asset.native(),
+              amount: "0.0000001",
+            })
+          )
+          .setTimeout(30)
+          .build();
+
+        const signed = await (
+          freighter as {
+            signTransaction: (
+              xdr: string,
+              opts: { networkPassphrase?: string; network?: string }
+            ) => Promise<{ signedTxXdr: string }>;
+          }
+        ).signTransaction(tx.toXDR(), {
+          networkPassphrase: "Test SDF Network ; September 2015",
+        });
+
+        const signedTx = StellarSdk.TransactionBuilder.fromXDR(
+          signed.signedTxXdr,
+          StellarSdk.Networks.TESTNET
+        );
+        const result = await server.submitTransaction(signedTx);
+        return (result as any).hash as string;
+      } catch (err) {
+        const msg =
+          err instanceof Error ? err.message : "Consent TX gonderilirken hata olustu";
+        setState((s) => ({ ...s, error: msg }));
+        return null;
+      }
+    },
+    []
+  );
+
+  return { ...state, connect, signChallenge, signAndSubmitConsentTx };
 }

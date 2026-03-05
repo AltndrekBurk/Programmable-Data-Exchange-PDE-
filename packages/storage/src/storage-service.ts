@@ -18,35 +18,29 @@ import type {
   StoredProof,
   StoredProvider,
   StoredBotConfig,
+  EscrowRecord,
   EntityType,
 } from './types.js'
 
 export class StorageService {
-  private mode: 'ipfs+stellar' | 'memory'
   private cache: WarmCache
-  private keypair: Keypair | null = null
-
-  // In-memory fallback stores (used when mode = 'memory')
-  private memSkills = new Map<string, StoredSkill>()
-  private memMcps = new Map<string, StoredMcpStandard>()
-  private memProofs = new Map<string, StoredProof>()
-  private memProviders = new Map<string, StoredProvider>()
-  private memBotConfigs = new Map<string, StoredBotConfig>()
+  private keypair: Keypair
 
   constructor(cache: WarmCache) {
-    this.mode = (process.env['STORAGE_MODE'] as any) || 'memory'
     this.cache = cache
 
     const secret = process.env['STELLAR_PLATFORM_SECRET']
-    if (secret) {
-      try {
-        this.keypair = Keypair.fromSecret(secret)
-      } catch {
-        console.warn('[storage] Invalid STELLAR_PLATFORM_SECRET')
-      }
+    if (!secret) {
+      throw new Error('[storage] STELLAR_PLATFORM_SECRET is required (no in-memory fallback)')
     }
 
-    console.log(`[storage] Mode: ${this.mode}`)
+    try {
+      this.keypair = Keypair.fromSecret(secret)
+    } catch {
+      throw new Error('[storage] Invalid STELLAR_PLATFORM_SECRET')
+    }
+
+    console.log('[storage] Mode: ipfs+stellar (memory simulation devre dışı)')
   }
 
   // =========================================================================
@@ -54,26 +48,15 @@ export class StorageService {
   // =========================================================================
 
   async storeSkill(skill: StoredSkill): Promise<{ ipfsHash: string; stellarTx?: string }> {
-    if (this.mode === 'ipfs+stellar') {
-      return this.storeToIpfsAndStellar('skill', skill.id, skill)
-    }
-    // memory mode
-    this.memSkills.set(skill.id, skill)
-    return { ipfsHash: `QmMock${skill.id.slice(0, 8)}` }
+    return this.storeToIpfsAndStellar('skill', skill.id, skill)
   }
 
   async getSkill(id: string): Promise<StoredSkill | null> {
-    if (this.mode === 'ipfs+stellar') {
-      return this.fetchFromCache<StoredSkill>('skill', id)
-    }
-    return this.memSkills.get(id) || null
+    return this.fetchFromCache<StoredSkill>('skill', id)
   }
 
   async listSkills(): Promise<StoredSkill[]> {
-    if (this.mode === 'ipfs+stellar') {
-      return this.listFromCache<StoredSkill>('skill')
-    }
-    return Array.from(this.memSkills.values())
+    return this.listFromCache<StoredSkill>('skill')
   }
 
   // =========================================================================
@@ -81,25 +64,15 @@ export class StorageService {
   // =========================================================================
 
   async storeMcp(mcp: StoredMcpStandard): Promise<{ ipfsHash: string; stellarTx?: string }> {
-    if (this.mode === 'ipfs+stellar') {
-      return this.storeToIpfsAndStellar('mcp', mcp.id, mcp)
-    }
-    this.memMcps.set(mcp.id, mcp)
-    return { ipfsHash: `QmMock${mcp.id.slice(0, 8)}` }
+    return this.storeToIpfsAndStellar('mcp', mcp.id, mcp)
   }
 
   async getMcp(id: string): Promise<StoredMcpStandard | null> {
-    if (this.mode === 'ipfs+stellar') {
-      return this.fetchFromCache<StoredMcpStandard>('mcp', id)
-    }
-    return this.memMcps.get(id) || null
+    return this.fetchFromCache<StoredMcpStandard>('mcp', id)
   }
 
   async listMcps(): Promise<StoredMcpStandard[]> {
-    if (this.mode === 'ipfs+stellar') {
-      return this.listFromCache<StoredMcpStandard>('mcp')
-    }
-    return Array.from(this.memMcps.values())
+    return this.listFromCache<StoredMcpStandard>('mcp')
   }
 
   async updateMcp(id: string, update: Partial<StoredMcpStandard>): Promise<StoredMcpStandard | null> {
@@ -108,11 +81,7 @@ export class StorageService {
 
     const updated = { ...existing, ...update }
 
-    if (this.mode === 'ipfs+stellar') {
-      await this.storeToIpfsAndStellar('mcp', id, updated)
-    } else {
-      this.memMcps.set(id, updated)
-    }
+    await this.storeToIpfsAndStellar('mcp', id, updated)
     return updated
   }
 
@@ -121,18 +90,11 @@ export class StorageService {
   // =========================================================================
 
   async storeProof(proof: StoredProof): Promise<{ ipfsHash: string; stellarTx?: string }> {
-    if (this.mode === 'ipfs+stellar') {
-      return this.storeToIpfsAndStellar('proof', proof.proofHash, proof)
-    }
-    this.memProofs.set(proof.proofHash, proof)
-    return { ipfsHash: `QmMock${proof.proofHash.slice(0, 8)}` }
+    return this.storeToIpfsAndStellar('proof', proof.proofHash, proof)
   }
 
   async listProofs(): Promise<StoredProof[]> {
-    if (this.mode === 'ipfs+stellar') {
-      return this.listFromCache<StoredProof>('proof')
-    }
-    return Array.from(this.memProofs.values())
+    return this.listFromCache<StoredProof>('proof')
   }
 
   async listProofsBySkill(skillId: string): Promise<StoredProof[]> {
@@ -145,28 +107,16 @@ export class StorageService {
   // =========================================================================
 
   async storeProvider(provider: StoredProvider): Promise<{ ipfsHash: string; stellarTx?: string }> {
-    if (this.mode === 'ipfs+stellar') {
-      return this.storeToIpfsAndStellar('provider', provider.pseudoId, provider)
-    }
-    this.memProviders.set(provider.pseudoId, provider)
-    return { ipfsHash: `QmMock${provider.pseudoId.slice(0, 8)}` }
+    return this.storeToIpfsAndStellar('provider', provider.pseudoId, provider)
   }
 
   async getProvider(pseudoId: string): Promise<StoredProvider | null> {
-    if (this.mode === 'ipfs+stellar') {
-      return this.fetchFromCache<StoredProvider>('provider', pseudoId)
-    }
-    return this.memProviders.get(pseudoId) || null
+    return this.fetchFromCache<StoredProvider>('provider', pseudoId)
   }
 
   async listProviders(dataSource?: string): Promise<StoredProvider[]> {
-    const all = this.mode === 'ipfs+stellar'
-      ? await this.listFromCache<StoredProvider>('provider')
-      : Array.from(this.memProviders.values())
-
-    return all
-      .filter((p) => p.status === 'active')
-      .filter((p) => !dataSource || p.dataSources.includes(dataSource))
+    const all = await this.listFromCache<StoredProvider>('provider')
+    return all.filter((p) => p.status === 'active')
   }
 
   // =========================================================================
@@ -174,20 +124,64 @@ export class StorageService {
   // =========================================================================
 
   async storeBotConfig(config: StoredBotConfig): Promise<void> {
-    // Bot configs are sensitive — in production would be AES encrypted on IPFS
-    // For now, store in memory or as-is on IPFS
-    if (this.mode === 'ipfs+stellar') {
-      await this.storeToIpfsAndStellar('botconfig', config.pseudoId, config)
-    } else {
-      this.memBotConfigs.set(config.pseudoId, config)
-    }
+    // Bot config'ler hassas; yine de simülasyon yok, doğrudan IPFS + Stellar'a yaz
+    await this.storeToIpfsAndStellar('botconfig', config.pseudoId, config)
   }
 
   async getBotConfig(pseudoId: string): Promise<StoredBotConfig | null> {
-    if (this.mode === 'ipfs+stellar') {
-      return this.fetchFromCache<StoredBotConfig>('botconfig', pseudoId)
-    }
-    return this.memBotConfigs.get(pseudoId) || null
+    return this.fetchFromCache<StoredBotConfig>('botconfig', pseudoId)
+  }
+
+  // =========================================================================
+  // ESCROW RECORDS
+  // =========================================================================
+
+  async storeEscrow(record: EscrowRecord): Promise<{ ipfsHash: string; stellarTx?: string }> {
+    return this.storeToIpfsAndStellar('escrow', record.id, record)
+  }
+
+  async getEscrow(id: string): Promise<EscrowRecord | null> {
+    return this.fetchFromCache<EscrowRecord>('escrow', id)
+  }
+
+  async listEscrows(depositorPseudoId?: string): Promise<EscrowRecord[]> {
+    const all = await this.listFromCache<EscrowRecord>('escrow')
+    if (!depositorPseudoId) return all
+    return all.filter((r) => r.depositor === depositorPseudoId)
+  }
+
+  async updateEscrow(id: string, update: Partial<EscrowRecord>): Promise<EscrowRecord | null> {
+    const existing = await this.getEscrow(id)
+    if (!existing) return null
+    const updated = { ...existing, ...update }
+    await this.storeToIpfsAndStellar('escrow', id, updated)
+    return updated
+  }
+
+  // =========================================================================
+  // REVIEWS (per MCP)
+  // =========================================================================
+
+  async storeReviews(mcpId: string, reviews: unknown[]): Promise<{ ipfsHash: string; stellarTx?: string }> {
+    return this.storeToIpfsAndStellar('review', mcpId, reviews)
+  }
+
+  async getReviews(mcpId: string): Promise<unknown[]> {
+    const result = await this.fetchFromCache<unknown[]>('review', mcpId)
+    return result ?? []
+  }
+
+  // =========================================================================
+  // RAW (arbitrary JSON to IPFS only, no Stellar index)
+  // =========================================================================
+
+  async storeRaw(data: unknown): Promise<{ ipfsHash: string }> {
+    const { uploadJson } = await import('@dataeconomy/ipfs')
+    const ipfsHash = await uploadJson(data, {
+      name: `raw-${Date.now()}.json`,
+      keyvalues: { type: 'raw' },
+    })
+    return { ipfsHash }
   }
 
   // =========================================================================
@@ -199,34 +193,23 @@ export class StorageService {
     id: string,
     data: T
   ): Promise<{ ipfsHash: string; stellarTx?: string }> {
-    const { uploadJson, isIpfsAvailable } = await import('@dataeconomy/ipfs')
+    const { uploadJson } = await import('@dataeconomy/ipfs')
     const { writeIndexEntry } = await import('@dataeconomy/stellar')
 
-    let ipfsHash: string
-
-    // Step 1: Upload to IPFS
-    if (isIpfsAvailable()) {
-      ipfsHash = await uploadJson(data, {
-        name: `${type}-${id.slice(0, 8)}.json`,
-        keyvalues: { type, id: id.slice(0, 32) },
-      })
-    } else {
-      // Fallback: mock hash for dev without Pinata
-      ipfsHash = `QmMock${id.slice(0, 8)}`
-      console.warn(`[storage] PINATA_JWT not set — using mock IPFS hash for ${type}:${id}`)
-    }
+    // Step 1: Upload to IPFS (zorunlu, fallback yok)
+    const ipfsHash = await uploadJson(data, {
+      name: `${type}-${id.slice(0, 8)}.json`,
+      keyvalues: { type, id: id.slice(0, 32) },
+    })
 
     // Step 2: Write index to Stellar
     let stellarTx: string | undefined
-    if (this.keypair) {
-      try {
-        const key = WarmCache.stellarKey(type, id)
-        const result = await writeIndexEntry(this.keypair, key, ipfsHash)
-        stellarTx = (result as any).hash
-      } catch (err) {
-        console.warn(`[storage] Stellar index write failed for ${type}:${id}:`, err)
-        // Continue without Stellar — IPFS hash is still valid
-      }
+    try {
+      const key = WarmCache.stellarKey(type, id)
+      const result = await writeIndexEntry(this.keypair, key, ipfsHash)
+      stellarTx = (result as any).hash
+    } catch (err) {
+      throw new Error(`[storage] Stellar index write failed for ${type}:${id}: ${String(err)}`)
     }
 
     // Step 3: Update warm cache

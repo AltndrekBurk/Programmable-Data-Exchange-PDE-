@@ -6,6 +6,7 @@ import { useEffect, useState } from "react";
 import { apiFetch } from "@/lib/api";
 import Button from "@/components/ui/Button";
 import { useToast } from "@/components/ui/Toast";
+import { useFreighter } from "@/hooks/useFreighter";
 
 interface Task {
   id: string;
@@ -19,7 +20,6 @@ interface Task {
   expiresAt: string;
 }
 
-// Shape returned by GET /api/skills
 interface SkillItem {
   id: string;
   title: string;
@@ -35,6 +35,7 @@ export default function TasksPage() {
   const { data: session, status } = useSession();
   const router = useRouter();
   const { toast } = useToast();
+  const freighter = useFreighter();
   const [tasks, setTasks] = useState<Task[]>([]);
   const [loading, setLoading] = useState(true);
   const [actionLoading, setActionLoading] = useState<string | null>(null);
@@ -46,9 +47,6 @@ export default function TasksPage() {
   useEffect(() => {
     if (status !== "authenticated") return;
 
-    // GET /api/skills returns all active skills — from the user perspective
-    // these are candidate tasks. A dedicated /api/tasks endpoint would filter
-    // by pseudoId, but until that exists we use /api/skills and mark all pending.
     apiFetch<{ skills: SkillItem[] }>("/api/skills")
       .then((data) => {
         const mapped: Task[] = (data.skills || []).map((s) => ({
@@ -65,7 +63,7 @@ export default function TasksPage() {
         setTasks(mapped);
       })
       .catch((err: unknown) => {
-        const msg = err instanceof Error ? err.message : "Gorevler yuklenemedi";
+        const msg = err instanceof Error ? err.message : "Failed to load tasks";
         toast(msg, "error");
         setTasks([]);
       })
@@ -76,17 +74,37 @@ export default function TasksPage() {
     skillId: string,
     decision: "ACCEPT" | "REJECT"
   ) => {
-    if (!session?.user?.pseudoId) return;
+    const user = session?.user as { pseudoId?: string; stellarAddress?: string } | undefined;
+    const pseudoId = user?.pseudoId || user?.stellarAddress;
+    const publicKey = user?.stellarAddress || user?.pseudoId;
+    if (!pseudoId || !publicKey) {
+      toast("Wallet session not found", "error");
+      return;
+    }
     setActionLoading(skillId);
 
     try {
-      // POST /api/consent/record — writes decision to Stellar blockchain
+      let txHash: string | null = null;
+      if (decision === "ACCEPT") {
+        const pk = await freighter.connect();
+        if (!pk || pk !== publicKey) {
+          toast("Freighter cüzdan adresi ile oturum adresi uyuşmuyor", "error");
+          throw new Error("Address mismatch");
+        }
+        txHash = await freighter.signAndSubmitConsentTx(skillId, pseudoId, publicKey, decision);
+        if (!txHash) {
+          throw new Error("Consent transaction failed");
+        }
+      }
+
       await apiFetch("/api/consent/record", {
         method: "POST",
         body: JSON.stringify({
           skillId,
-          pseudoId: session.user.pseudoId,
+          pseudoId,
+          publicKey,
           decision,
+          txHash,
         }),
       });
 
@@ -100,13 +118,13 @@ export default function TasksPage() {
 
       toast(
         decision === "ACCEPT"
-          ? "Gorev kabul edildi. Proof sureci basliyor."
-          : "Gorev reddedildi.",
+          ? "Consent granted. Proof pipeline starting."
+          : "Task declined.",
         decision === "ACCEPT" ? "success" : "info"
       );
     } catch (err) {
       const msg =
-        err instanceof Error ? err.message : "Karar kaydedilemedi";
+        err instanceof Error ? err.message : "Failed to record decision";
       toast(msg, "error");
     } finally {
       setActionLoading(null);
@@ -117,9 +135,9 @@ export default function TasksPage() {
     return (
       <div className="mx-auto max-w-3xl px-4 py-12">
         <div className="animate-pulse space-y-4">
-          <div className="h-8 w-40 bg-gray-200 rounded" />
+          <div className="h-8 w-40 rounded bg-slate-900" />
           {[1, 2, 3].map((i) => (
-            <div key={i} className="h-28 bg-gray-200 rounded-lg" />
+            <div key={i} className="h-28 rounded-lg bg-slate-900" />
           ))}
         </div>
       </div>
@@ -133,36 +151,38 @@ export default function TasksPage() {
   const rejected = tasks.filter((t) => t.status === "rejected");
 
   return (
-    <div className="mx-auto max-w-3xl px-4 py-12">
-      <h1 className="text-2xl font-bold text-gray-900 mb-8">Gorevler</h1>
+    <div className="mx-auto max-w-3xl px-4 py-10 space-y-8">
+      <div>
+        <span className="flow-badge">Task Queue</span>
+        <h1 className="mt-3 text-3xl font-bold text-slate-100">Tasks</h1>
+        <p className="mt-2 text-sm text-slate-400">
+          Grant consent on pending tasks to start the proof pipeline. Consent is recorded on Stellar.
+        </p>
+      </div>
 
-      {/* Pending */}
       {pending.length > 0 && (
-        <section className="mb-8">
-          <h2 className="text-sm font-semibold text-gray-500 uppercase tracking-wide mb-3">
-            Bekleyen ({pending.length})
+        <section>
+          <h2 className="text-sm font-semibold uppercase tracking-wide text-amber-300 mb-3">
+            Pending Consent ({pending.length})
           </h2>
           <div className="space-y-3">
             {pending.map((task) => (
-              <div
-                key={task.skillId}
-                className="rounded-lg border border-yellow-200 bg-yellow-50 p-4"
-              >
+              <div key={task.skillId} className="flow-surface rounded-xl p-5">
                 <div className="flex items-start justify-between gap-4">
                   <div className="min-w-0">
-                    <h3 className="text-sm font-semibold text-gray-900 truncate">
+                    <h3 className="text-sm font-semibold text-slate-100 truncate">
                       {task.title}
                     </h3>
-                    <p className="text-xs text-gray-500 mt-1">
+                    <p className="text-xs text-slate-400 mt-1">
                       {task.dataSource}
                       {task.metrics.length > 0 && ` — ${task.metrics.join(", ")}`}
                       {" — "}
-                      <span className="font-medium text-gray-700">
+                      <span className="font-medium text-emerald-300">
                         {task.rewardPerUser} USDC
                       </span>
                     </p>
-                    <p className="text-xs text-gray-400 mt-0.5">
-                      Sure: {task.durationDays} gun
+                    <p className="text-xs text-slate-500 mt-0.5">
+                      Duration: {task.durationDays} days
                     </p>
                   </div>
                   <div className="flex gap-2 shrink-0">
@@ -173,7 +193,7 @@ export default function TasksPage() {
                       isLoading={actionLoading === task.skillId}
                       onClick={() => handleDecision(task.skillId, "ACCEPT")}
                     >
-                      Kabul
+                      Accept
                     </Button>
                     <Button
                       size="sm"
@@ -182,7 +202,7 @@ export default function TasksPage() {
                       isLoading={actionLoading === task.skillId}
                       onClick={() => handleDecision(task.skillId, "REJECT")}
                     >
-                      Red
+                      Decline
                     </Button>
                   </div>
                 </div>
@@ -192,38 +212,28 @@ export default function TasksPage() {
         </section>
       )}
 
-      {/* Active / Accepted */}
       {active.length > 0 && (
-        <section className="mb-8">
-          <h2 className="text-sm font-semibold text-gray-500 uppercase tracking-wide mb-3">
-            Aktif ({active.length})
+        <section>
+          <h2 className="text-sm font-semibold uppercase tracking-wide text-emerald-300 mb-3">
+            Active ({active.length})
           </h2>
           <div className="space-y-3">
             {active.map((task) => (
-              <div
-                key={task.skillId}
-                className="rounded-lg border border-green-200 bg-green-50 p-4"
-              >
+              <div key={task.skillId} className="flow-surface rounded-xl p-5">
                 <div className="flex items-center justify-between gap-4">
                   <div>
-                    <h3 className="text-sm font-semibold text-gray-900">
+                    <h3 className="text-sm font-semibold text-slate-100">
                       {task.title}
                     </h3>
-                    <p className="text-xs text-gray-500 mt-1">
+                    <p className="text-xs text-slate-400 mt-1">
                       {task.dataSource} — {task.rewardPerUser} USDC —{" "}
                       {task.status === "completed"
-                        ? "Tamamlandi, odeme bekleniyor"
-                        : "Kabul edildi, proof bekleniyor"}
+                        ? "Completed, awaiting settlement"
+                        : "Consent granted, awaiting proof"}
                     </p>
                   </div>
-                  <span
-                    className={`inline-flex items-center rounded-full px-2 py-1 text-xs font-medium ${
-                      task.status === "completed"
-                        ? "bg-blue-50 text-blue-700"
-                        : "bg-green-100 text-green-700"
-                    }`}
-                  >
-                    {task.status === "completed" ? "Tamamlandi" : "Aktif"}
+                  <span className={`flow-status-badge ${task.status === "completed" ? "locked" : "active"}`}>
+                    {task.status === "completed" ? "Completed" : "Active"}
                   </span>
                 </div>
               </div>
@@ -232,22 +242,23 @@ export default function TasksPage() {
         </section>
       )}
 
-      {/* Rejected */}
       {rejected.length > 0 && (
-        <section className="mb-8">
-          <h2 className="text-sm font-semibold text-gray-500 uppercase tracking-wide mb-3">
-            Reddedilen ({rejected.length})
+        <section>
+          <h2 className="text-sm font-semibold uppercase tracking-wide text-slate-500 mb-3">
+            Declined ({rejected.length})
           </h2>
           <div className="space-y-3">
             {rejected.map((task) => (
-              <div
-                key={task.skillId}
-                className="rounded-lg border border-gray-200 p-4 opacity-60"
-              >
-                <h3 className="text-sm font-semibold text-gray-900">
-                  {task.title}
-                </h3>
-                <p className="text-xs text-gray-500 mt-1">Reddedildi</p>
+              <div key={task.skillId} className="flow-surface rounded-xl p-5 opacity-60">
+                <div className="flex items-center justify-between">
+                  <div>
+                    <h3 className="text-sm font-semibold text-slate-300">
+                      {task.title}
+                    </h3>
+                    <p className="text-xs text-slate-500 mt-1">Declined</p>
+                  </div>
+                  <span className="flow-status-badge rejected">Declined</span>
+                </div>
               </div>
             ))}
           </div>
@@ -255,11 +266,10 @@ export default function TasksPage() {
       )}
 
       {tasks.length === 0 && (
-        <div className="text-center py-16">
-          <p className="text-sm text-gray-500">Henuz gorev yok.</p>
-          <p className="text-xs text-gray-400 mt-2">
-            OpenClaw kurulduktan sonra gorevler WhatsApp/Telegram uzerinden de
-            bildirilir.
+        <div className="flow-surface rounded-xl py-16 text-center">
+          <p className="text-slate-400">No tasks available yet.</p>
+          <p className="text-sm text-slate-500 mt-2">
+            Tasks are also delivered via WhatsApp/Telegram through your OpenClaw bot.
           </p>
         </div>
       )}

@@ -3,16 +3,14 @@
   "configurations": [
     {
       "name": "web",
-      "runtimeExecutable": "C:\\Program Files\\nodejs\\npx.cmd",
-      "runtimeArgs": ["next", "dev", "--port", "3000"],
-      "cwd": "apps/web",
+      "runtimeExecutable": "cmd",
+      "runtimeArgs": ["/c", "npm run dev --workspace=apps/web"],
       "port": 3000
     },
     {
       "name": "api",
-      "runtimeExecutable": "C:\\Program Files\\nodejs\\npx.cmd",
-      "runtimeArgs": ["tsx", "watch", "src/index.ts"],
-      "cwd": "apps/api",
+      "runtimeExecutable": "cmd",
+      "runtimeArgs": ["/c", "npm run dev --workspace=apps/api"],
       "port": 3001
     }
   ]

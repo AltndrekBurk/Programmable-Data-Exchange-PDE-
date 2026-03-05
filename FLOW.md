@@ -81,8 +81,8 @@ Son güncelleme: 2026-03-01 (v1.0 — X402 Stellar, native ZK)
 │  İlk kayıtta:                                           │
 │  → Wallet ile giriş                                     │
 │  → Desteklediği veri türünü işaretler:                  │
-│    • API (zkTLS ile kanıtlanır) — MVP                   │
-│    • Device/Cihaz (runtime doğrulama) — Phase 2+        │
+│    • API (zkTLSekstra seçenek  ile kanıtlanır) — MVP                   │
+│    • Device/Cihaz (runtime doğrulama esktra seçenek doğrulama) — Phase 2+        │
 │  → OpenClaw bot ayarları (opsiyonel)                    │
 │                                                          │
 │  Görev geldiğinde:                                      │
@@ -115,7 +115,7 @@ Son güncelleme: 2026-03-01 (v1.0 — X402 Stellar, native ZK)
 │                                                          │
 │  POST /api/proofs/submit                                │
 │  Header: X-Payment (X402, USDC on Stellar testnet)          │
-│  Body: { skillId, pseudoId, proof }                     │
+│  Body: { skillId, pseudoId, proof, delivery.encryptedPayload } │
 │                                                          │
 │  Platform doğrulama zinciri:                            │
 │    1. X402 ödeme doğrulama (spam engeli)                │
@@ -124,8 +124,10 @@ Son güncelleme: 2026-03-01 (v1.0 — X402 Stellar, native ZK)
 │    4. Provider eşleşme (Fitbit = Fitbit mi?)            │
 │    5. Tekrar gönderim kontrolü                          │
 │    6. Agent doğrulama (gerçekten OpenClaw botu mu?)     │
-│    7. Proof hash → Stellar'a yazılır                    │
-│    8. Soroban escrow release() tetiklenir               │
+│    7. Buyer callbackUrl (skill.callbackUrl) resolve edilir │
+│    8. encrypted payload buyer'a HTTPS POST edilir        │
+│    9. Proof hash → Stellar'a yazılır                    │
+│   10. Soroban escrow release() tetiklenir               │
 └─────────────────────────────────────────────────────────┘
             ↓
 ┌─────────────────────────────────────────────────────────┐
@@ -145,7 +147,9 @@ Son güncelleme: 2026-03-01 (v1.0 — X402 Stellar, native ZK)
 ┌─────────────────────────────────────────────────────────┐
 │ 8. SONUÇ TESLİMİ — Platform → Veri İsteyen              │
 │                                                          │
-│  MVP'de: Veri sadece talep edene şifreli gönderilir     │
+│  MVP'de: OpenClaw encrypted payload üretir, platform     │
+│  X402 doğrulaması sonrası buyer callbackUrl'e HTTPS ile  │
+│  teslim eder (plaintext platforma girmez)               │
 │  → Proof paketi + metadata                              │
 │  → X402 ile "önce ödeme" garantisi                      │
 │  → Hash + durum takibi blockchain'de                    │
@@ -175,13 +179,13 @@ Son güncelleme: 2026-03-01 (v1.0 — X402 Stellar, native ZK)
 ## Veri Türleri
 
 ### API Verisi (MVP)
-- Web API'si olan her kaynak: Fitbit, Strava, Plaid, Spotify, GitHub, Google Fit, bank API'leri...
-- zkTLS (Reclaim Protocol) ile kanıtlanır
-- Zaman damgalı — proof ne zaman üretildi kesin
+- Web API'si olan her kaynak: Fitbit, Strava, Plaid, Spotify, GitHub, Google Fit, bank API'leri... ve daha fazlası simülasyon yapma
+- zkTLS (Reclaim Protocol) ile kanıtlanır ekstra seçenek şuan kapalı
+- Zaman damgalı — proof ne zaman üretildi kesin - veri isteyenin belirlediği tarih aralığı
 - Doğrulama: ZK imza + timestamp + provider eşleşme
 
 ### Device/Cihaz Verisi (Phase 2)
-- Cihazdan doğrudan alınan veri (sensör, GPS, kamera...)
+- Cihazdan doğrudan alınan veri (sensör, GPS, kamera...) ekstra şuan kapalı
 - Çalışma zamanı doğrulaması: gerçekten cihazda çalıştırıldı mı? (TEE, runtime attestation)
 - ZK ile doğrulama mümkün ama TEE desteği gerekli
 - İleride FHE ile spesifik aralık sorguları (ör: "yaşı 25-35 arası mı?" sorusuna evet/hayır, kesin yaş gizli)
@@ -208,16 +212,17 @@ Son güncelleme: 2026-03-01 (v1.0 — X402 Stellar, native ZK)
 Stellar Public Key (G...56 chars)
         ↓ HMAC-SHA256(PSEUDONYM_SECRET)
   pseudo_id = "a7f3x9k2m1p8q4r5"  ← 16 karakter
+  #PSEDUO ÜRETİLİRSE NASIL X402 ŞLE ÖDEME YAPILACAK??? WALLET İLE BAĞLANINCA TRANSACATİON YAPICAK ZTN!
 
 Platform hiçbir zaman:
-  ✗ Kullanıcının gerçek adını bilmez
+  
   ✗ Hangi OAuth hesabından veri çekildiğini bilmez
   ✗ Ham veriyi görmez
 
 Platform şunu bilir:
-  ✓ Bu pseudo_id bu skill için ACCEPT verdi (Stellar TX)
-  ✓ Bu proof bu pseudo_id'ye ait (ZK imzası)
-  ✓ Proof gerçek bir web API'sinden üretildi (Reclaim)
+  ✓ Bu pseudo_id bu skill için ACCEPT verdi (Stellar TX)-ÖDEME YAPAN -ALAN PUBLİC KEY ÖDEME TÜRÜNÜ MCPSEÇENKLERİSKİİLLER ...
+  
+  ✓ Proof gerçek bir web API'sinden üretildi (Reclaim)-PHASE 2
 ```
 
 ---
@@ -248,9 +253,9 @@ Backend    : Hono (Node.js) — port 3001
 Blockchain : Stellar + Soroban (escrow + geri bildirim kontratları)
 ZK Proof   : Reclaim Protocol (zkFetch / zkTLS)
 Storage    : Pinata IPFS (Skill JSON + MCP standartları)
-Kimlik     : HMAC-SHA256 pseudo_id
-Gateway    : OpenClaw (WhatsApp/Telegram/Discord)
-WASM       : Kriptografik işlemler, ZK doğrulama client-side
+Kimlik     : HMAC-SHA256 pseudo_id - ? WALLET ADRESİ İNDEX İÇİN BUNLAR OLAİBLİR?
+Gateway    : OpenClaw (WhatsApp/Telegram/Discord) -AGNET.MD VERİ STANDARTLARI İÇİN KOMUT DİKKAT,VERİ AKTARIMI ŞİFRELİ FACİLATOR ARACILIĞLA!
+WASM       : Kriptografik işlemler, ZK doğrulama client-side -PHASE 2
 ```
 
 ---
@@ -294,12 +299,12 @@ dataEconomy/
 ## Eksik / Sonraki Adımlar
 
 1. **Marketplace sayfası** — MCP listeleme, arama, filtreleme, upload, rating
-2. **MCP oluşturucu** — Veri çekme standardı oluşturma formu
-3. **Veri sağlayıcı kayıt** — API/Device türü seçimi, OpenClaw bot ayarları
-4. **Görev listesi** — Bekleyen görevler + kabul/red + durum takibi
-5. **Dashboard** — Kazançlar, aktif görevler, proof durumu
+2. **MCP oluşturucu** — Veri çekme standardı oluşturma formu-SİMÜLASYON YAPMA -mcp oluşturunca ipfs-ye dğaıtıpıp chainde mcp-id- adı -kime ait olduğu-dönnen volume-ipfs prompt-skill mcp standartı indexlenip tutulsun
+3. **Veri sağlayıcı kayıt** — API/Device türü seçimi, OpenClaw bot ayarları-token giriş olasıllı policy seçimi!veri aktarrıırken son onay  kutusu!
+4. **Görev listesi** — Bekleyen görevler + kabul/red + durum takibi-satır başı ödenen para
+5. **Dashboard** — Kazançlar, aktif görevler, proof durumu(zaman damgası)
 6. **Geri bildirim kontratı** — Soroban ile MCP kalite değerlendirmesi
-7. **X402 middleware** — proofs/submit route'una bağla
+7. **X402 middleware** — proofs/submit route'una bağla facilator aracı - buyer -facilator - seller(user +openclaw botu)
 8. **Testnet deploy** — Soroban escrow Stellar testnet'e
 9. **AGENT.md** — OpenClaw botu için direktifler
-10. **Gerçek Stellar TX** — consent.ts'deki mock kaldır
+10. **Gerçek Stellar TX** — consent.ts'deki mock kaldır -simülasyon yapm

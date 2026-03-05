@@ -17,7 +17,8 @@ export function createEscrowRouter(escrow: EscrowAdapter) {
 
   router.post('/lock', zValidator('json', lockSchema), async (c) => {
     const body = c.req.valid('json')
-    const secret = process.env.PSEUDONYM_SECRET || 'dev-secret'
+    const secret = process.env.PSEUDONYM_SECRET
+    if (!secret) return c.json({ error: 'PSEUDONYM_SECRET yapılandırılmamış' }, 500)
     const pseudoId = generatePseudonym(secret, body.stellarAddress).pseudonym
 
     const record = await escrow.lock({
@@ -114,7 +115,8 @@ export function createEscrowRouter(escrow: EscrowAdapter) {
     let depositorPseudoId: string | undefined
 
     if (address) {
-      const secret = process.env.PSEUDONYM_SECRET || 'dev-secret'
+      const secret = process.env.PSEUDONYM_SECRET
+      if (!secret) return c.json({ error: 'PSEUDONYM_SECRET yapılandırılmamış' }, 500)
       depositorPseudoId = generatePseudonym(secret, address).pseudonym
     }
 

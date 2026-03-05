@@ -8,16 +8,8 @@ import { apiFetch } from "@/lib/api";
 import Button from "@/components/ui/Button";
 
 const DATA_SOURCES = [
-  "fitbit",
-  "strava",
-  "plaid",
-  "spotify",
-  "github",
-  "google_fit",
-  "oura",
-  "withings",
-  "garmin",
-  "custom",
+  "fitbit", "strava", "plaid", "spotify", "github",
+  "google_fit", "oura", "withings", "garmin", "custom",
 ];
 
 export default function CreateSkillPage() {
@@ -78,7 +70,7 @@ function CreateSkillInner() {
       });
       setResult(res);
     } catch (err) {
-      setError(err instanceof Error ? err.message : "Bir hata olustu");
+      setError(err instanceof Error ? err.message : "Something went wrong");
     } finally {
       setSubmitting(false);
     }
@@ -89,36 +81,39 @@ function CreateSkillInner() {
   if (result) {
     return (
       <div className="mx-auto max-w-2xl px-4 py-12">
-        <div className="rounded-lg border border-green-200 bg-green-50 p-6">
-          <h2 className="text-lg font-semibold text-green-900 mb-4">
-            Veri Talebi Olusturuldu
-          </h2>
+        <div className="flow-surface rounded-xl p-6">
+          <div className="mb-4 flex items-center justify-between">
+            <h2 className="text-lg font-semibold text-emerald-300">
+              Data Request Created
+            </h2>
+            <span className="flow-badge">Active</span>
+          </div>
+          <p className="mb-4 text-sm text-slate-400">
+            Deposit USDC to the escrow address to activate the program. Matching providers will be notified automatically.
+          </p>
           <dl className="space-y-3 text-sm">
             <div>
-              <dt className="text-green-700 font-medium">Skill ID</dt>
-              <dd className="font-mono text-green-900">{result.skillId}</dd>
+              <dt className="text-slate-400 font-medium">Skill ID</dt>
+              <dd className="font-mono text-slate-100">{result.skillId}</dd>
             </div>
             <div>
-              <dt className="text-green-700 font-medium">IPFS Hash</dt>
-              <dd className="font-mono text-green-900">{result.ipfsHash}</dd>
+              <dt className="text-slate-400 font-medium">IPFS Hash</dt>
+              <dd className="font-mono text-slate-100">{result.ipfsHash}</dd>
             </div>
             <div>
-              <dt className="text-green-700 font-medium">Escrow Adresi</dt>
-              <dd className="font-mono text-green-900 break-all">
+              <dt className="text-slate-400 font-medium">Escrow Address</dt>
+              <dd className="font-mono text-slate-100 break-all">
                 {result.escrowAddress}
               </dd>
             </div>
           </dl>
-          <p className="mt-4 text-sm text-green-700">
-            USDC'yi escrow adresine yatirarak talebi aktif edebilirsin.
-          </p>
           <div className="mt-6 flex gap-3">
             <Button
               variant="primary"
               size="sm"
               onClick={() => router.push("/dashboard")}
             >
-              Dashboard'a Don
+              Go to Dashboard
             </Button>
             <Button
               variant="outline"
@@ -128,7 +123,7 @@ function CreateSkillInner() {
                 setError(null);
               }}
             >
-              Yeni Talep Olustur
+              Create Another
             </Button>
           </div>
         </div>
@@ -137,69 +132,52 @@ function CreateSkillInner() {
   }
 
   return (
-    <div className="mx-auto max-w-2xl px-4 py-12">
-      <h1 className="text-2xl font-bold text-gray-900 mb-2">
-        Veri Talep Et
+    <div className="mx-auto max-w-2xl px-4 py-10">
+      <span className="flow-badge">Skill Builder</span>
+      <h1 className="mt-3 text-3xl font-bold text-slate-100">
+        Buy Data
       </h1>
-      <p className="text-sm text-gray-500 mb-8">
+      <p className="mt-2 mb-8 text-sm text-slate-400">
         {mcpId
-          ? `Marketplace MCP #${mcpId.slice(0, 8)} kullaniliyor. Parametreleri ozellestir.`
-          : "Ne tur veri istedigini tanimla. Uygun saglayicilar bilgilendirilecek."}
+          ? `Using marketplace standard #${mcpId.slice(0, 8)}. Customize the parameters below.`
+          : "Define what data you need. Matching providers will be notified and can grant consent."}
       </p>
 
-      {error && (
-        <div className="mb-6 rounded-md bg-red-50 p-4 text-sm text-red-700">
-          {error}
-        </div>
-      )}
+      {error && <div className="flow-error mb-6">{error}</div>}
 
-      <form onSubmit={handleSubmit} className="space-y-6">
+      <form onSubmit={handleSubmit} className="flow-surface space-y-6 rounded-xl p-6">
         <div>
-          <label className="block text-sm font-medium text-gray-700 mb-1">
-            Baslik
-          </label>
+          <label className="flow-label">Title</label>
           <input
             name="title"
             required
-            className="w-full rounded-md border border-gray-300 px-3 py-2 text-sm focus:border-blue-500 focus:outline-none focus:ring-1 focus:ring-blue-500"
-            placeholder="Fitbit 90 Gunluk Adim Verisi"
+            className="flow-input"
+            placeholder="Fitbit 90-Day Step Data"
           />
         </div>
 
         <div>
-          <label className="block text-sm font-medium text-gray-700 mb-1">
-            Aciklama
-          </label>
+          <label className="flow-label">Description</label>
           <textarea
             name="description"
             required
             rows={3}
-            className="w-full rounded-md border border-gray-300 px-3 py-2 text-sm focus:border-blue-500 focus:outline-none focus:ring-1 focus:ring-blue-500"
-            placeholder="Hangi verileri neden istedigini acikla..."
+            className="flow-input"
+            placeholder="Describe what data you need and why..."
           />
         </div>
 
         <div className="grid grid-cols-2 gap-4">
           <div>
-            <label className="block text-sm font-medium text-gray-700 mb-1">
-              Veri Kaynagi
-            </label>
-            <select
-              name="dataSource"
-              required
-              className="w-full rounded-md border border-gray-300 px-3 py-2 text-sm focus:border-blue-500 focus:outline-none"
-            >
+            <label className="flow-label">Data Source</label>
+            <select name="dataSource" required className="flow-input">
               {DATA_SOURCES.map((src) => (
-                <option key={src} value={src}>
-                  {src}
-                </option>
+                <option key={src} value={src}>{src}</option>
               ))}
             </select>
           </div>
           <div>
-            <label className="block text-sm font-medium text-gray-700 mb-1">
-              Sure (gun)
-            </label>
+            <label className="flow-label">Duration (days)</label>
             <input
               name="durationDays"
               type="number"
@@ -207,28 +185,24 @@ function CreateSkillInner() {
               min={1}
               max={365}
               defaultValue={30}
-              className="w-full rounded-md border border-gray-300 px-3 py-2 text-sm focus:border-blue-500 focus:outline-none focus:ring-1 focus:ring-blue-500"
+              className="flow-input"
             />
           </div>
         </div>
 
         <div>
-          <label className="block text-sm font-medium text-gray-700 mb-1">
-            Metrikler (virgülle ayir)
-          </label>
+          <label className="flow-label">Metrics (comma-separated)</label>
           <input
             name="metrics"
             required
-            className="w-full rounded-md border border-gray-300 px-3 py-2 text-sm focus:border-blue-500 focus:outline-none focus:ring-1 focus:ring-blue-500"
+            className="flow-input"
             placeholder="steps, heart_rate, calories"
           />
         </div>
 
         <div className="grid grid-cols-3 gap-4">
           <div>
-            <label className="block text-sm font-medium text-gray-700 mb-1">
-              Kullanici Basi Odul (USDC)
-            </label>
+            <label className="flow-label">Reward per User (USDC)</label>
             <input
               name="rewardPerUser"
               type="number"
@@ -236,13 +210,11 @@ function CreateSkillInner() {
               min={0.01}
               step={0.01}
               defaultValue={1.5}
-              className="w-full rounded-md border border-gray-300 px-3 py-2 text-sm focus:border-blue-500 focus:outline-none focus:ring-1 focus:ring-blue-500"
+              className="flow-input"
             />
           </div>
           <div>
-            <label className="block text-sm font-medium text-gray-700 mb-1">
-              Toplam Butce (USDC)
-            </label>
+            <label className="flow-label">Total Budget (USDC)</label>
             <input
               name="totalBudget"
               type="number"
@@ -250,38 +222,34 @@ function CreateSkillInner() {
               min={1}
               step={0.01}
               defaultValue={150}
-              className="w-full rounded-md border border-gray-300 px-3 py-2 text-sm focus:border-blue-500 focus:outline-none focus:ring-1 focus:ring-blue-500"
+              className="flow-input"
             />
           </div>
           <div>
-            <label className="block text-sm font-medium text-gray-700 mb-1">
-              Hedef Kullanici
-            </label>
+            <label className="flow-label">Target Providers</label>
             <input
               name="targetCount"
               type="number"
               required
               min={1}
               defaultValue={100}
-              className="w-full rounded-md border border-gray-300 px-3 py-2 text-sm focus:border-blue-500 focus:outline-none focus:ring-1 focus:ring-blue-500"
+              className="flow-input"
             />
           </div>
         </div>
 
         <div>
-          <label className="block text-sm font-medium text-gray-700 mb-1">
-            Callback URL (opsiyonel)
-          </label>
+          <label className="flow-label">Callback URL (optional)</label>
           <input
             name="callbackUrl"
             type="url"
-            className="w-full rounded-md border border-gray-300 px-3 py-2 text-sm focus:border-blue-500 focus:outline-none focus:ring-1 focus:ring-blue-500"
-            placeholder="https://sirketim.com/webhook/data-ready"
+            className="flow-input"
+            placeholder="https://your-api.example/webhook/data-ready"
           />
         </div>
 
         <Button type="submit" isLoading={submitting} className="w-full">
-          Talep Olustur ve IPFS'e Yukle
+          Create Request &amp; Upload to IPFS
         </Button>
       </form>
     </div>

@@ -13,6 +13,12 @@ use soroban_sdk::{
 pub enum DataKey {
     Escrow(String),
     Admin,
+    /// user Address → staked XLM amount (i128)
+    Stake(Address),
+    /// XLM token address for staking
+    StakeToken,
+    /// Minimum stake required
+    MinStake,
 }
 
 // ---------------------------------------------------------------------------
@@ -27,9 +33,10 @@ pub struct EscrowData {
     pub amount: i128,
     pub recipient: Address,
     pub platform: Address,
-    pub dispute: Address,
+    pub dispute_wallet: Address,
     pub skill_id: String,
     pub released: bool,
+    pub disputed: bool,
     pub created_at: u64,
 }
 
@@ -43,6 +50,27 @@ pub enum EscrowStatus {
 }
 
 // ---------------------------------------------------------------------------
+// Helpers
+// ---------------------------------------------------------------------------
+
+fn require_staked(env: &Env, user: &Address) {
+    let stake_key = DataKey::Stake(user.clone());
+    let staked: i128 = env
+        .storage()
+        .persistent()
+        .get(&stake_key)
+        .unwrap_or(0i128);
+    let min_stake: i128 = env
+        .storage()
+        .instance()
+        .get(&DataKey::MinStake)
+        .unwrap_or(100_000_000i128);
+    if staked < min_stake {
+        panic!("insufficient stake: deposit XLM first");
+    }
+}
+
+// ---------------------------------------------------------------------------
 // Contract
 // ---------------------------------------------------------------------------
 
@@ -51,23 +79,95 @@ pub struct EscrowContract;
 
 #[contractimpl]
 impl EscrowContract {
-    // -----------------------------------------------------------------------
-    // initialize — set admin once
-    // -----------------------------------------------------------------------
-    pub fn initialize(env: Env, admin: Address) {
+    /// Initialize with admin, XLM token for staking, and minimum stake
+    pub fn initialize(env: Env, admin: Address, xlm_token: Address, min_stake: i128) {
         if env.storage().instance().has(&DataKey::Admin) {
             panic!("already initialized");
         }
         admin.require_auth();
         env.storage().instance().set(&DataKey::Admin, &admin);
+        env.storage().instance().set(&DataKey::StakeToken, &xlm_token);
+        env.storage().instance().set(&DataKey::MinStake, &min_stake);
     }
 
-    // -----------------------------------------------------------------------
-    // deposit — lock USDC (or any SAC token) into the contract
-    //
-    // escrow_id: caller-supplied unique identifier
-    //            (e.g. skillId + ":" + userId)
-    // -----------------------------------------------------------------------
+    // =======================================================================
+    // STAKING
+    // =======================================================================
+
+    pub fn stake(env: Env, user: Address, amount: i128) {
+        user.require_auth();
+        if amount <= 0 {
+            panic!("amount must be positive");
+        }
+
+        let xlm_token: Address = env
+            .storage()
+            .instance()
+            .get(&DataKey::StakeToken)
+            .expect("not initialized");
+
+        let token_client = token::Client::new(&env, &xlm_token);
+        token_client.transfer(&user, &env.current_contract_address(), &amount);
+
+        let stake_key = DataKey::Stake(user.clone());
+        let current: i128 = env
+            .storage()
+            .persistent()
+            .get(&stake_key)
+            .unwrap_or(0i128);
+        env.storage()
+            .persistent()
+            .set(&stake_key, &(current + amount));
+        env.storage()
+            .persistent()
+            .extend_ttl(&stake_key, 6_307_200, 6_307_200);
+    }
+
+    pub fn unstake(env: Env, user: Address, amount: i128) {
+        user.require_auth();
+        if amount <= 0 {
+            panic!("amount must be positive");
+        }
+
+        let stake_key = DataKey::Stake(user.clone());
+        let current: i128 = env
+            .storage()
+            .persistent()
+            .get(&stake_key)
+            .unwrap_or(0i128);
+        if amount > current {
+            panic!("insufficient stake balance");
+        }
+
+        let xlm_token: Address = env
+            .storage()
+            .instance()
+            .get(&DataKey::StakeToken)
+            .expect("not initialized");
+
+        let token_client = token::Client::new(&env, &xlm_token);
+        token_client.transfer(&env.current_contract_address(), &user, &amount);
+
+        env.storage()
+            .persistent()
+            .set(&stake_key, &(current - amount));
+        env.storage()
+            .persistent()
+            .extend_ttl(&stake_key, 6_307_200, 6_307_200);
+    }
+
+    pub fn get_stake(env: Env, user: Address) -> i128 {
+        let stake_key = DataKey::Stake(user);
+        env.storage()
+            .persistent()
+            .get(&stake_key)
+            .unwrap_or(0i128)
+    }
+
+    // =======================================================================
+    // ESCROW — all require stake
+    // =======================================================================
+
     pub fn deposit(
         env: Env,
         depositor: Address,
@@ -75,23 +175,22 @@ impl EscrowContract {
         amount: i128,
         recipient: Address,
         platform: Address,
-        dispute: Address,
+        dispute_wallet: Address,
         skill_id: String,
         escrow_id: String,
     ) {
         depositor.require_auth();
+        require_staked(&env, &depositor);
 
         if amount <= 0 {
             panic!("amount must be positive");
         }
 
-        // Escrow ID must not already exist
         let key = DataKey::Escrow(escrow_id.clone());
         if env.storage().persistent().has(&key) {
             panic!("escrow_id already exists");
         }
 
-        // Transfer tokens from depositor → contract
         let token_client = token::Client::new(&env, &token);
         token_client.transfer(&depositor, &env.current_contract_address(), &amount);
 
@@ -101,21 +200,16 @@ impl EscrowContract {
             amount,
             recipient,
             platform,
-            dispute,
+            dispute_wallet,
             skill_id,
             released: false,
+            disputed: false,
             created_at: env.ledger().timestamp(),
         };
 
         env.storage().persistent().set(&key, &data);
     }
 
-    // -----------------------------------------------------------------------
-    // release — platform triggers 3-way split
-    //   70% → recipient
-    //   20% → platform
-    //   10% → dispute
-    // -----------------------------------------------------------------------
     pub fn release(env: Env, caller: Address, escrow_id: String) {
         caller.require_auth();
 
@@ -129,43 +223,23 @@ impl EscrowContract {
         if data.released {
             panic!("already released");
         }
-
-        // Only the designated platform address may release
         if caller != data.platform {
             panic!("unauthorized: only platform may release");
         }
 
         let token_client = token::Client::new(&env, &data.token);
-
-        // Integer 3-way split (basis points: 7000 / 2000 / 1000)
         let recipient_amount = data.amount * 70 / 100;
         let platform_amount = data.amount * 20 / 100;
-        // Remainder goes to dispute wallet to avoid dust from integer division
         let dispute_amount = data.amount - recipient_amount - platform_amount;
 
-        token_client.transfer(
-            &env.current_contract_address(),
-            &data.recipient,
-            &recipient_amount,
-        );
-        token_client.transfer(
-            &env.current_contract_address(),
-            &data.platform,
-            &platform_amount,
-        );
-        token_client.transfer(
-            &env.current_contract_address(),
-            &data.dispute,
-            &dispute_amount,
-        );
+        token_client.transfer(&env.current_contract_address(), &data.recipient, &recipient_amount);
+        token_client.transfer(&env.current_contract_address(), &data.platform, &platform_amount);
+        token_client.transfer(&env.current_contract_address(), &data.dispute_wallet, &dispute_amount);
 
         data.released = true;
         env.storage().persistent().set(&key, &data);
     }
 
-    // -----------------------------------------------------------------------
-    // refund — depositor reclaims full amount (only before release)
-    // -----------------------------------------------------------------------
     pub fn refund(env: Env, caller: Address, escrow_id: String) {
         caller.require_auth();
 
@@ -179,32 +253,22 @@ impl EscrowContract {
         if data.released {
             panic!("already released");
         }
-
         if caller != data.depositor {
             panic!("unauthorized: only depositor may refund");
         }
 
         let token_client = token::Client::new(&env, &data.token);
-        token_client.transfer(
-            &env.current_contract_address(),
-            &data.depositor,
-            &data.amount,
-        );
+        token_client.transfer(&env.current_contract_address(), &data.depositor, &data.amount);
 
-        data.released = true; // mark consumed so it cannot be refunded twice
+        data.released = true;
         env.storage().persistent().set(&key, &data);
     }
 
-    // -----------------------------------------------------------------------
-    // dispute — recipient or platform can flag the escrow as Disputed.
-    //           This is a status marker; actual resolution is off-chain /
-    //           handled by the dispute wallet.
-    // -----------------------------------------------------------------------
     pub fn dispute(env: Env, caller: Address, escrow_id: String) {
         caller.require_auth();
 
         let key = DataKey::Escrow(escrow_id.clone());
-        let data: EscrowData = env
+        let mut data: EscrowData = env
             .storage()
             .persistent()
             .get(&key)
@@ -213,46 +277,12 @@ impl EscrowContract {
         if data.released {
             panic!("escrow already finalised");
         }
-
         if caller != data.recipient && caller != data.platform {
             panic!("unauthorized: only recipient or platform may dispute");
         }
 
-        // Persist a separate dispute-status flag alongside the escrow data.
-        // We store the status under a dedicated key so EscrowData stays simple.
-        let status_key = DataKey::Escrow(
-            String::from_str(&env, &{
-                // Build "escrow_id:status" as a storage key variant
-                // Soroban String concatenation workaround: use a fixed suffix byte slice
-                // We store the disputed flag as a bool under a prefixed key instead.
-                // See note below.
-                "disputed"
-            }),
-        );
-
-        // Simpler approach: store a bool under a composite key.
-        // We reuse the DataKey::Escrow variant with a mangled id.
-        // Since Soroban String lacks format!, we store status as a separate
-        // persistent entry keyed by the plain escrow_id via the EscrowStatus enum.
-        let _ = status_key; // unused — see below
-
-        // Store the disputed status directly in persistent storage using a
-        // tuple key (escrow_id, "status") encoded as a new DataKey variant.
-        // Because we only have two DataKey variants, we store the status flag
-        // as a simple boolean in a well-known entry derived from escrow_id.
-        // The convention: DataKey::Escrow(escrow_id + "_disputed") = true
-        //
-        // Soroban String does not support runtime concatenation without alloc
-        // trickery in no_std.  Instead we store the disputed flag as a
-        // separate field using the existing EscrowData — we repurpose
-        // `released` semantics differently via a secondary bool stored on
-        // a DataKey::Escrow keyed with the raw escrow_id bytes reversed.
-        //
-        // Cleanest no_std solution: add a `disputed` bool to EscrowData and
-        // re-store it. (EscrowData already has `released`.)
-        //
-        // This file keeps EscrowData simple; we emit a contract event instead
-        // to signal the disputed state, which is the idiomatic Soroban pattern.
+        data.disputed = true;
+        env.storage().persistent().set(&key, &data);
 
         env.events().publish(
             (String::from_str(&env, "escrow"), String::from_str(&env, "disputed")),
@@ -260,9 +290,6 @@ impl EscrowContract {
         );
     }
 
-    // -----------------------------------------------------------------------
-    // get_escrow — read-only accessor
-    // -----------------------------------------------------------------------
     pub fn get_escrow(env: Env, escrow_id: String) -> EscrowData {
         let key = DataKey::Escrow(escrow_id);
         env.storage()
@@ -271,9 +298,6 @@ impl EscrowContract {
             .unwrap_or_else(|| panic!("escrow not found"))
     }
 
-    // -----------------------------------------------------------------------
-    // get_status — derive logical status from EscrowData
-    // -----------------------------------------------------------------------
     pub fn get_status(env: Env, escrow_id: String) -> EscrowStatus {
         let key = DataKey::Escrow(escrow_id);
         let data: EscrowData = env
@@ -282,19 +306,15 @@ impl EscrowContract {
             .get(&key)
             .unwrap_or_else(|| panic!("escrow not found"));
 
-        if data.released {
-            // We cannot distinguish Released vs Refunded from the bool alone
-            // without an extra field — return Released as the general finalised state.
+        if data.disputed {
+            EscrowStatus::Disputed
+        } else if data.released {
             EscrowStatus::Released
         } else {
             EscrowStatus::Active
         }
     }
 }
-
-// ---------------------------------------------------------------------------
-// Tests
-// ---------------------------------------------------------------------------
 
 #[cfg(test)]
 mod test;

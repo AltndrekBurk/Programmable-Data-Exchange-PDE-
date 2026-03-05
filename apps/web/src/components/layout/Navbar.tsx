@@ -7,11 +7,8 @@ import { usePathname } from "next/navigation";
 const navLinks = [
   { href: "/dashboard", label: "Dashboard" },
   { href: "/marketplace", label: "Marketplace" },
-  { href: "/skills/create", label: "Veri Talep Et" },
-  { href: "/tasks", label: "Gorevler" },
-  { href: "/escrow", label: "Escrow" },
-  { href: "/proofs", label: "Proofs" },
-  { href: "/provider", label: "Saglayici Ol" },
+  { href: "/buy", label: "Buy Data" },
+  { href: "/sell", label: "Sell Data" },
 ];
 
 export default function Navbar() {
@@ -19,12 +16,17 @@ export default function Navbar() {
   const pathname = usePathname();
 
   return (
-    <nav className="border-b border-gray-200 bg-white">
+    <nav className="sticky top-0 z-40 border-b border-slate-800/90 bg-slate-950/85 backdrop-blur">
       <div className="mx-auto max-w-7xl px-4 sm:px-6 lg:px-8">
         <div className="flex h-16 items-center justify-between">
           <div className="flex items-center gap-8">
-            <Link href="/" className="text-xl font-bold text-gray-900">
-              dataEconomy
+            <Link href="/" className="flex items-center gap-2">
+              <span className="text-xl font-bold tracking-tight text-slate-100">
+                dataEconomy
+              </span>
+              <span className="hidden rounded-full border border-emerald-400/40 bg-emerald-500/10 px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-emerald-300 md:inline">
+                Data Exchange
+              </span>
             </Link>
             {status === "authenticated" && (
               <div className="hidden md:flex items-center gap-1">
@@ -34,8 +36,8 @@ export default function Navbar() {
                     href={link.href}
                     className={`px-3 py-2 rounded-md text-sm font-medium transition-colors ${
                       pathname === link.href || pathname?.startsWith(link.href + "/")
-                        ? "bg-blue-50 text-blue-700"
-                        : "text-gray-600 hover:text-gray-900 hover:bg-gray-50"
+                        ? "bg-emerald-500/15 text-emerald-300 border border-emerald-400/30"
+                        : "text-slate-300 hover:text-white hover:bg-slate-900"
                     }`}
                   >
                     {link.label}
@@ -49,27 +51,27 @@ export default function Navbar() {
             {status === "authenticated" && session?.user ? (
               <>
                 <div className="hidden sm:flex flex-col items-end text-xs">
-                  <span className="text-gray-500 font-mono">
+                  <span className="text-slate-400 font-mono">
                     {session.user.stellarAddress?.slice(0, 6)}...
                     {session.user.stellarAddress?.slice(-4)}
                   </span>
-                  <span className="text-gray-400">
+                  <span className="text-slate-500">
                     {session.user.pseudoId?.slice(0, 8)}
                   </span>
                 </div>
                 <button
                   onClick={() => signOut({ callbackUrl: "/login" })}
-                  className="text-sm text-gray-500 hover:text-gray-700 transition-colors"
+                  className="text-sm text-slate-400 hover:text-white transition-colors"
                 >
-                  Cikis
+                  Sign Out
                 </button>
               </>
             ) : status === "unauthenticated" ? (
               <Link
                 href="/login"
-                className="rounded-md bg-blue-600 px-4 py-2 text-sm font-medium text-white hover:bg-blue-700 transition-colors"
+                className="rounded-md border border-emerald-400/30 bg-emerald-500/15 px-4 py-2 text-sm font-medium text-emerald-200 hover:bg-emerald-500/20 transition-colors"
               >
-                Giris Yap
+                Sign In
               </Link>
             ) : null}
           </div>

@@ -235,6 +235,46 @@ export async function readAccountData(
   return dataMap
 }
 
+
+// ---------------------------------------------------------------------------
+// USDC Payment
+// ---------------------------------------------------------------------------
+
+/**
+ * Send USDC to a recipient on Stellar testnet.
+ * Uses the testnet USDC issuer (classic Stellar asset, not SAC).
+ */
+export async function sendUsdcPayment(
+  senderKeypair: Keypair,
+  recipientAddress: string,
+  amount: number,
+  memo?: string
+): Promise<Horizon.HorizonApi.TransactionResponse> {
+  const USDC_ISSUER_TESTNET = 'GBBD47IF6LWK7P7MDEVSCWR7DPUWV3NY3DTQEVFL4NAT4AQH3ZLLFLA5'
+  const usdcAsset = new Asset('USDC', USDC_ISSUER_TESTNET)
+
+  const account = await horizonServer.loadAccount(senderKeypair.publicKey())
+
+  const builder = new TransactionBuilder(account, {
+    fee: BASE_FEE,
+    networkPassphrase: Networks.TESTNET,
+  }).addOperation(
+    Operation.payment({
+      destination: recipientAddress,
+      asset: usdcAsset,
+      amount: amount.toFixed(7),
+    })
+  )
+
+  if (memo) builder.addMemo(Memo.text(memo.slice(0, 28)))
+
+  const tx = builder.setTimeout(30).build()
+  tx.sign(senderKeypair)
+
+  const result = await horizonServer.submitTransaction(tx)
+  return result as Horizon.HorizonApi.TransactionResponse
+}
+
 /**
  * Check if Stellar testnet is reachable.
  */

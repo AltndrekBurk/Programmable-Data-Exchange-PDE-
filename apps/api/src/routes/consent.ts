@@ -2,10 +2,10 @@ import { Hono } from 'hono'
 import { z } from 'zod'
 import { zValidator } from '@hono/zod-validator'
 import { generatePseudonym } from '@dataeconomy/pseudonym'
-import { writeConsentTx } from '@dataeconomy/stellar'
-import { Keypair } from '@stellar/stellar-sdk'
+import { horizonServer } from '@dataeconomy/stellar'
 
 export const consentRouter = new Hono()
+const isProd = process.env.NODE_ENV === 'production'
 
 const notifyUserSchema = z.object({
   skillId: z.string().uuid(),
@@ -61,33 +61,64 @@ const recordConsentSchema = z.object({
   skillId: z.string().uuid(),
   pseudoId: z.string(),
   decision: z.enum(['ACCEPT', 'REJECT']),
+  txHash: z.string().min(1).optional(),
+  publicKey: z.string().startsWith('G').length(56).optional(),
 })
 
 consentRouter.post('/record', zValidator('json', recordConsentSchema), async (c) => {
   const body = c.req.valid('json')
 
-  const platformSecret = process.env.STELLAR_PLATFORM_SECRET
-  if (!platformSecret) {
-    return c.json({ error: 'Platform Stellar secret yapılandırılmamış' }, 500)
+  if (body.decision === 'ACCEPT') {
+    if (!body.txHash || !body.publicKey) {
+      return c.json({ error: 'txHash ve publicKey gerekli' }, 400)
+    }
+
+    try {
+      const tx = await horizonServer.transactions().transaction(body.txHash).call()
+      const memoText: string | undefined =
+        (tx as any).memo_type === 'text' ? ((tx as any).memo as string) : undefined
+
+      if (!memoText) {
+        return c.json({ error: 'Consent TX memo bulunamadi' }, 400)
+      }
+
+      const parts = memoText.split(':')
+      if (parts.length !== 4 || parts[0] !== 'CONSENT') {
+        return c.json({ error: 'Consent memo format gecersiz' }, 400)
+      }
+
+      const [_, memoSkill, memoUser, memoDecision] = parts
+      const compactSkillId = body.skillId.replace(/-/g, '').slice(0, 4)
+      const compactPseudoId = body.pseudoId.replace(/-/g, '').slice(0, 4)
+
+      if (
+        memoSkill !== compactSkillId ||
+        memoUser !== compactPseudoId ||
+        memoDecision !== body.decision
+      ) {
+        return c.json({ error: 'Consent memo beklenen degerlerle eslesmiyor' }, 409)
+      }
+
+      if ((tx as any).source_account !== body.publicKey) {
+        return c.json({ error: 'Consent TX farkli bir kaynaktan gonderilmis' }, 409)
+      }
+
+      return c.json({
+        status: 'verified',
+        memo: memoText,
+        txHash: body.txHash,
+        decision: body.decision,
+        timestamp: new Date().toISOString(),
+      })
+    } catch (err) {
+      console.error('[consent] Consent TX lookup failed:', err)
+      return c.json({ error: 'Consent TX Horizon uzerinden dogrulanamadi' }, 502)
+    }
   }
 
-  // Memo 28 byte sınırı: "CS:12345678:12345678:A" = 22 byte — sığar
-  const memo = `CS:${body.skillId.slice(0, 8)}:${body.pseudoId.slice(0, 8)}:${body.decision === 'ACCEPT' ? 'A' : 'R'}`
-
-  let stellarTx = 'TESTNET_DISABLED'
-  try {
-    const keypair = Keypair.fromSecret(platformSecret)
-    const result = await writeConsentTx(keypair, body.skillId.slice(0, 8), body.pseudoId.slice(0, 8), body.decision)
-    stellarTx = (result as any).hash ?? String(result)
-  } catch (err) {
-    console.error('[consent] Stellar TX failed:', err)
-    // Testnet unreliable — devam et ama logla
-  }
-
+  // REJECT icin on-chain TX zorunlu degil; sadece off-chain kayit
   return c.json({
     status: 'recorded',
-    memo,
-    stellarTx,
     decision: body.decision,
     timestamp: new Date().toISOString(),
   })

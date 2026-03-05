@@ -20,6 +20,8 @@ const PREFIXES: Record<EntityType, string> = {
   proof: 'pf:',
   provider: 'pr:',
   botconfig: 'bc:',
+  escrow: 'es:',
+  review: 'rv:',
 }
 
 export class WarmCache {
@@ -31,6 +33,8 @@ export class WarmCache {
     this.stores.set('proof', new Map())
     this.stores.set('provider', new Map())
     this.stores.set('botconfig', new Map())
+    this.stores.set('escrow', new Map())
+    this.stores.set('review', new Map())
   }
 
   /**

@@ -9,11 +9,11 @@ import Button from "@/components/ui/Button";
 type Step = "idle" | "connecting" | "signing" | "verifying" | "error";
 
 const stepLabel: Record<Step, string> = {
-  idle: "Freighter ile Bağlan",
-  connecting: "Cüzdan açılıyor...",
-  signing: "İmzalama bekleniyor...",
-  verifying: "Doğrulanıyor...",
-  error: "Tekrar Dene",
+  idle: "Connect with Freighter",
+  connecting: "Opening wallet...",
+  signing: "Waiting for signature...",
+  verifying: "Verifying...",
+  error: "Try Again",
 };
 
 export default function LoginPage() {
@@ -29,17 +29,15 @@ export default function LoginPage() {
     setErrorMsg(null);
     setStep("connecting");
 
-    // 1. Freighter'a bağlan, public key al
     const publicKey = await freighter.connect();
     if (!publicKey) {
-      setErrorMsg(freighter.error || "Cüzdan bağlanamadı");
+      setErrorMsg(freighter.error || "Failed to connect wallet");
       setStep("error");
       return;
     }
 
     setStep("signing");
 
-    // 2. Backend'den challenge al
     const apiUrl = process.env.NEXT_PUBLIC_API_URL || "http://localhost:3001";
     let challenge: string;
     try {
@@ -47,29 +45,27 @@ export default function LoginPage() {
         `${apiUrl}/api/auth/challenge?address=${publicKey}`
       );
       if (!res.ok) {
-        throw new Error(`Sunucu hatası: ${res.status}`);
+        throw new Error(`Server error: ${res.status}`);
       }
       const data = await res.json();
       challenge = data.challenge;
     } catch (err) {
       const msg =
-        err instanceof Error ? err.message : "Sunucuya bağlanılamadı";
+        err instanceof Error ? err.message : "Could not reach server";
       setErrorMsg(msg);
       setStep("error");
       return;
     }
 
-    // 3. Challenge'ı imzala
     const signature = await freighter.signChallenge(challenge);
     if (!signature) {
-      setErrorMsg(freighter.error || "İmzalama iptal edildi veya başarısız");
+      setErrorMsg(freighter.error || "Signature cancelled or failed");
       setStep("error");
       return;
     }
 
     setStep("verifying");
 
-    // 4. NextAuth credentials provider ile giriş
     const result = await signIn("credentials", {
       publicKey,
       signature,
@@ -78,7 +74,7 @@ export default function LoginPage() {
     });
 
     if (!result?.ok || result?.error) {
-      setErrorMsg("Kimlik doğrulama başarısız");
+      setErrorMsg("Authentication failed");
       setStep("error");
       return;
     }
@@ -90,19 +86,19 @@ export default function LoginPage() {
   return (
     <div className="flex flex-col items-center gap-6">
       <div className="text-center">
-        <h2 className="text-2xl font-bold text-gray-900">
-          dataEconomy&apos;ye Giriş
+        <h2 className="text-2xl font-bold text-slate-100">
+          Sign in to dataEconomy
         </h2>
-        <p className="mt-2 text-sm text-gray-500">
-          Stellar cüzdanınla güvenli, anonim giriş yap
+        <p className="mt-2 text-sm text-slate-400">
+          Secure, anonymous authentication via your Stellar wallet
         </p>
       </div>
 
       <div
-        className="w-16 h-16 rounded-full bg-black flex items-center justify-center"
+        className="w-16 h-16 rounded-full border border-emerald-400/40 bg-slate-950 flex items-center justify-center"
         aria-hidden="true"
       >
-        <span className="text-white text-2xl font-bold">XLM</span>
+        <span className="text-emerald-300 text-2xl font-bold">XLM</span>
       </div>
 
       <div className="w-full space-y-3">
@@ -121,27 +117,27 @@ export default function LoginPage() {
         {errorMsg && (
           <div
             role="alert"
-            className="rounded-md bg-red-50 border border-red-200 p-3"
+            className="flow-error"
           >
-            <p className="text-sm text-red-700">{errorMsg}</p>
+            <p>{errorMsg}</p>
           </div>
         )}
       </div>
 
-      <div className="text-center text-xs text-gray-400 space-y-1">
-        <p>Freighter yüklü değil mi?</p>
+      <div className="text-center text-xs text-slate-500 space-y-1">
+        <p>Don&apos;t have Freighter installed?</p>
         <a
           href="https://freighter.app"
           target="_blank"
           rel="noopener noreferrer"
-          className="text-blue-500 hover:underline"
+          className="text-emerald-300 hover:underline"
         >
-          freighter.app üzerinden indir
+          Download from freighter.app
         </a>
       </div>
 
-      <p className="text-center text-xs text-gray-400">
-        Gerçek kimliğin saklanmaz &mdash; sadece anonim ID kullanılır
+      <p className="text-center text-xs text-slate-500">
+        Your real identity is never stored &mdash; only an anonymous pseudonym ID is used
       </p>
     </div>
   );

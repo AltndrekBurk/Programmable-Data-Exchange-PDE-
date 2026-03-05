@@ -44,32 +44,23 @@ export default function EscrowPage() {
 
   if (loading) {
     return (
-      <div className="max-w-4xl mx-auto p-6">
-        <h1 className="text-2xl font-bold mb-6">Escrow Durumu</h1>
-        <div className="animate-pulse space-y-3">
-          {[1, 2, 3].map((i) => (
-            <div key={i} className="h-20 bg-gray-100 rounded-lg" />
-          ))}
+      <div className="mx-auto max-w-4xl px-4 py-12">
+        <div className="animate-pulse space-y-4">
+          <div className="h-8 w-56 rounded bg-slate-900" />
+          <div className="grid grid-cols-4 gap-3">
+            {[1, 2, 3, 4].map((i) => (
+              <div key={i} className="h-20 rounded-lg bg-slate-900" />
+            ))}
+          </div>
+          <div className="space-y-3">
+            {[1, 2, 3].map((i) => (
+              <div key={i} className="h-24 rounded-lg bg-slate-900" />
+            ))}
+          </div>
         </div>
       </div>
     );
   }
-
-  const statusBadge = (s: string) => {
-    const styles: Record<string, { bg: string; text: string; label: string }> = {
-      locked: { bg: "bg-blue-100", text: "text-blue-700", label: "Kilitli" },
-      releasing: { bg: "bg-yellow-100", text: "text-yellow-700", label: "Serbest Birakiliyor" },
-      released: { bg: "bg-green-100", text: "text-green-700", label: "Serbest" },
-      disputed: { bg: "bg-red-100", text: "text-red-700", label: "Itiraz" },
-      refunded: { bg: "bg-gray-100", text: "text-gray-700", label: "Iade" },
-    };
-    const style = styles[s] || styles.locked;
-    return (
-      <span className={`px-2 py-0.5 text-xs font-medium rounded-full ${style.bg} ${style.text}`}>
-        {style.label}
-      </span>
-    );
-  };
 
   const totalLocked = escrows.reduce((sum, e) => sum + parseFloat(e.locked || "0"), 0);
   const totalReleased = escrows.reduce((sum, e) => sum + parseFloat(e.released || "0"), 0);
@@ -77,47 +68,57 @@ export default function EscrowPage() {
   const activeCount = escrows.filter((e) => e.status === "locked").length;
 
   return (
-    <div className="max-w-4xl mx-auto p-6">
-      <h1 className="text-2xl font-bold mb-2">Escrow Durumu</h1>
-      <p className="text-sm text-gray-500 mb-6">
-        Stellar Soroban escrow kontrati ile USDC kilitleme ve serbest birakma takibi
-      </p>
+    <div className="mx-auto max-w-4xl px-4 py-10 space-y-8">
+      <div>
+        <span className="flow-badge">Escrow Tracker</span>
+        <h1 className="mt-3 text-3xl font-bold text-slate-100">Escrow Status</h1>
+        <p className="mt-2 text-sm text-slate-400">
+          USDC escrow managed by Soroban smart contract on Stellar. Atomic 3-way release on verified proof.
+        </p>
+      </div>
 
-      {/* Summary Cards */}
-      <div className="grid grid-cols-2 sm:grid-cols-4 gap-4 mb-6">
-        <div className="bg-gray-50 rounded-lg p-4">
-          <p className="text-xs text-gray-500">Toplam Butce</p>
-          <p className="text-xl font-bold text-gray-700">{totalBudget.toFixed(2)} USDC</p>
+      <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
+        <div className="flow-surface rounded-lg px-4 py-3">
+          <p className="text-xs uppercase tracking-wide text-slate-500">Total Budget</p>
+          <p className="mt-1 text-2xl font-bold text-slate-100">{totalBudget.toFixed(2)} USDC</p>
         </div>
-        <div className="bg-blue-50 rounded-lg p-4">
-          <p className="text-xs text-blue-500">Kilitli</p>
-          <p className="text-xl font-bold text-blue-700">{totalLocked.toFixed(2)} USDC</p>
+        <div className="flow-surface rounded-lg px-4 py-3">
+          <p className="text-xs uppercase tracking-wide text-slate-500">Locked</p>
+          <p className="mt-1 text-2xl font-bold text-cyan-300">{totalLocked.toFixed(2)} USDC</p>
         </div>
-        <div className="bg-green-50 rounded-lg p-4">
-          <p className="text-xs text-green-500">Serbest Birakilan</p>
-          <p className="text-xl font-bold text-green-700">{totalReleased.toFixed(2)} USDC</p>
+        <div className="flow-surface rounded-lg px-4 py-3">
+          <p className="text-xs uppercase tracking-wide text-slate-500">Released</p>
+          <p className="mt-1 text-2xl font-bold text-emerald-300">{totalReleased.toFixed(2)} USDC</p>
         </div>
-        <div className="bg-gray-50 rounded-lg p-4">
-          <p className="text-xs text-gray-500">Aktif Escrow</p>
-          <p className="text-xl font-bold text-gray-700">{activeCount}</p>
+        <div className="flow-surface rounded-lg px-4 py-3">
+          <p className="text-xs uppercase tracking-wide text-slate-500">Active Escrows</p>
+          <p className="mt-1 text-2xl font-bold text-slate-100">{activeCount}</p>
         </div>
       </div>
 
-      {/* Escrow Split Info */}
-      <div className="bg-gray-50 border border-gray-200 rounded-lg p-4 mb-6 text-sm text-gray-600">
-        <p className="font-medium text-gray-700 mb-1">Escrow Dagitim Orani (Atomik)</p>
-        <div className="flex gap-4">
-          <span>%70 Saglayici</span>
-          <span>%20 Platform</span>
-          <span>%10 Dispute Pool</span>
+      <div className="flow-surface rounded-xl p-4">
+        <p className="text-sm font-medium text-slate-300 mb-2">Settlement Distribution (Atomic)</p>
+        <div className="flex gap-4 text-sm">
+          <span className="inline-flex items-center gap-1.5">
+            <span className="h-2 w-2 rounded-full bg-emerald-400" />
+            <span className="text-slate-400">70% Provider</span>
+          </span>
+          <span className="inline-flex items-center gap-1.5">
+            <span className="h-2 w-2 rounded-full bg-cyan-400" />
+            <span className="text-slate-400">20% Platform</span>
+          </span>
+          <span className="inline-flex items-center gap-1.5">
+            <span className="h-2 w-2 rounded-full bg-amber-400" />
+            <span className="text-slate-400">10% Dispute Pool</span>
+          </span>
         </div>
       </div>
 
       {escrows.length === 0 ? (
-        <div className="text-center py-12 text-gray-400">
-          <p className="text-lg">Henuz escrow kaydi yok</p>
-          <p className="text-sm mt-1">
-            Bir skill olusturup USDC kilitldiginizde burada gorunur
+        <div className="flow-surface rounded-xl py-16 text-center">
+          <p className="text-slate-400">No escrow records yet.</p>
+          <p className="text-sm text-slate-500 mt-2">
+            Escrow entries appear when USDC is locked for a Buy Data program.
           </p>
         </div>
       ) : (
@@ -125,30 +126,32 @@ export default function EscrowPage() {
           {escrows.map((entry) => (
             <div
               key={entry.id}
-              className="border border-gray-200 rounded-lg p-4 hover:border-gray-300 transition-colors"
+              className="flow-surface rounded-xl p-5 transition-all hover:border-slate-600"
             >
-              <div className="flex items-center justify-between mb-2">
-                <span className="font-medium text-gray-800">{entry.title}</span>
-                {statusBadge(entry.status)}
+              <div className="flex items-center justify-between mb-3">
+                <h3 className="text-sm font-semibold text-slate-100">{entry.title}</h3>
+                <span className={`flow-status-badge ${entry.status}`}>
+                  {entry.status}
+                </span>
               </div>
-              <div className="flex flex-wrap gap-4 text-sm text-gray-500">
-                <span>Butce: {entry.totalBudget} USDC</span>
-                <span>Kilitli: {entry.locked} USDC</span>
-                <span>Serbest: {entry.released} USDC</span>
+              <div className="flex flex-wrap gap-4 text-sm text-slate-400">
+                <span>Budget: <span className="text-slate-200">{entry.totalBudget} USDC</span></span>
+                <span>Locked: <span className="text-cyan-300">{entry.locked} USDC</span></span>
+                <span>Released: <span className="text-emerald-300">{entry.released} USDC</span></span>
               </div>
               {entry.status === "released" && (
-                <div className="flex gap-4 text-xs text-gray-400 mt-1">
-                  <span>Saglayici: {entry.providerShare} USDC</span>
+                <div className="flex gap-4 text-xs text-slate-500 mt-2 pt-2 border-t border-slate-800">
+                  <span>Provider: {entry.providerShare} USDC</span>
                   <span>Platform: {entry.platformShare} USDC</span>
                   <span>Dispute: {entry.disputePool} USDC</span>
                 </div>
               )}
-              <div className="flex items-center justify-between mt-2">
-                <span className="text-xs text-gray-400">
-                  {new Date(entry.createdAt).toLocaleString("tr-TR")}
+              <div className="flex items-center justify-between mt-3 pt-2 border-t border-slate-800">
+                <span className="text-xs text-slate-500">
+                  {new Date(entry.createdAt).toLocaleString("en-US")}
                 </span>
                 {entry.txHash && (
-                  <span className="text-xs text-gray-400 font-mono">
+                  <span className="text-xs text-slate-500 font-mono">
                     TX: {entry.txHash.slice(0, 16)}...
                   </span>
                 )}

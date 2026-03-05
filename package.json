@@ -6,12 +6,21 @@
     "packages/*"
   ],
   "scripts": {
-    "dev": "npm run dev --workspace=apps/web",
+    "dev": "concurrently -k -n api,web \"npm run dev --workspace=apps/api\" \"npm run dev --workspace=apps/web\"",
     "dev:api": "npm run dev --workspace=apps/api",
-    "build": "npm run build --workspace=apps/web",
+    "dev:web": "npm run dev --workspace=apps/web",
+    "build:packages": "npm run build --workspace=packages/pseudonym && npm run build --workspace=packages/ipfs && npm run build --workspace=packages/stellar && npm run build --workspace=packages/reclaim && npm run build --workspace=packages/storage",
+    "build:api": "npm run build --workspace=apps/api",
+    "build:web": "npm run build --workspace=apps/web",
+    "build": "npm run build:packages && npm run build:api && npm run build:web",
+    "start:api": "npm run start --workspace=apps/api",
+    "start:web": "npm run start --workspace=apps/web",
     "lint": "npm run lint --workspace=apps/web"
   },
   "devDependencies": {
+    "@types/node": "^24.5.2",
+    "concurrently": "^9.2.1",
+    "husky": "^9.1.7",
     "typescript": "^5.0.0"
   }
 }

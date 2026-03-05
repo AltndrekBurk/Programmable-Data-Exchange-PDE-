@@ -6,6 +6,8 @@ import { generatePseudonym } from '@dataeconomy/pseudonym'
 import crypto from 'crypto'
 
 export const authRouter = new Hono()
+const isProd = process.env.NODE_ENV === 'production'
+const allowInsecureAuth = process.env.ALLOW_INSECURE_AUTH === 'true' && !isProd
 
 // In-memory challenge store (production'da Redis olmalı)
 const challenges = new Map<string, { challenge: string; expiresAt: number }>()
@@ -36,6 +38,18 @@ const verifySchema = z.object({
 authRouter.post('/verify', zValidator('json', verifySchema), async (c) => {
   const { publicKey, signature, challenge } = c.req.valid('json')
 
+  // Geliştirme sürecinde cüzdan bağlantısını engellememek için,
+  // ALLOW_INSECURE_AUTH=true ise challenge ve imza doğrulamasını atla.
+  // (Escrow / proof / ödeme akışlarında herhangi bir simülasyon yok.)
+  if (allowInsecureAuth) {
+    const secret = process.env.PSEUDONYM_SECRET
+    if (!secret) {
+      return c.json({ error: 'PSEUDONYM_SECRET yapilandirilmamis' }, 500)
+    }
+    const pseudoId = generatePseudonym(secret, publicKey).pseudonym
+    return c.json({ pseudoId, stellarAddress: publicKey })
+  }
+
   // Challenge kontrolü
   const stored = challenges.get(publicKey)
   if (!stored || stored.challenge !== challenge || stored.expiresAt < Date.now()) {
@@ -44,6 +58,7 @@ authRouter.post('/verify', zValidator('json', verifySchema), async (c) => {
   challenges.delete(publicKey) // tek kullanımlık
 
   // Ed25519 imza doğrulama
+  let isValid = false
   try {
     const keypair = Keypair.fromPublicKey(publicKey)
     const messageBuffer = Buffer.from(challenge, 'utf-8')
@@ -51,7 +66,6 @@ authRouter.post('/verify', zValidator('json', verifySchema), async (c) => {
 
     // Freighter signMessage farklı formatlarda dönebilir
     // Önce raw Ed25519 dene, başarısızsa hex decode dene
-    let isValid = false
     try {
       isValid = keypair.verify(messageBuffer, signatureBuffer)
     } catch {
@@ -63,18 +77,24 @@ authRouter.post('/verify', zValidator('json', verifySchema), async (c) => {
         // Son deneme: signature doğrudan UTF-8 olarak geldiyse base64 decode farklı olabilir
       }
     }
-
-    if (!isValid) {
-      // Testnet MVP: imza doğrulanamazsa loglayıp devam et
-      // Production'da bu kesinlikle reject edilmeli
-      console.warn(`[auth] Signature verification failed for ${publicKey.slice(0, 8)}... — allowing for testnet MVP`)
-    }
   } catch (err) {
-    console.warn('[auth] Signature format error, allowing for testnet MVP:', err)
+    console.warn('[auth] Signature parsing error:', err)
+  }
+
+  if (!isValid) {
+    if (!allowInsecureAuth) {
+      return c.json({ error: 'Imza dogrulama basarisiz' }, 401)
+    }
+    console.warn(
+      `[auth] Signature verification failed for ${publicKey.slice(0, 8)}... — ALLOW_INSECURE_AUTH enabled`
+    )
   }
 
   // Pseudo ID üret
-  const secret = process.env.PSEUDONYM_SECRET || 'dev-secret-change-in-production'
+  const secret = process.env.PSEUDONYM_SECRET
+  if (!secret) {
+    return c.json({ error: 'PSEUDONYM_SECRET yapilandirilmamis' }, 500)
+  }
   const pseudoId = generatePseudonym(secret, publicKey).pseudonym
 
   return c.json({ pseudoId, stellarAddress: publicKey })

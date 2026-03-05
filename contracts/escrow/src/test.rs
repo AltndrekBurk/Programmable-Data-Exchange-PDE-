@@ -26,7 +26,7 @@ fn setup_escrow(
     env: &Env,
 ) -> (
     Address, // contract
-    Address, // token
+    Address, // usdc token
     TokenClient<'_>,
     Address, // depositor
     Address, // recipient
@@ -41,10 +41,21 @@ fn setup_escrow(
     let platform = Address::generate(env);
     let dispute = Address::generate(env);
 
+    // Create USDC token
     let (token_addr, token_client, token_admin) = create_token(env, &admin);
-
-    // Mint 1_000 units to depositor
+    // Mint 1_000 USDC to depositor
     token_admin.mint(&depositor, &1_000_i128);
+
+    // Create XLM token for staking
+    let (xlm_addr, _xlm_client, xlm_admin) = create_token(env, &admin);
+
+    // Initialize contract with staking
+    let client = EscrowContractClient::new(env, &contract_addr);
+    client.initialize(&admin, &xlm_addr, &100_000_000i128);
+
+    // Stake XLM for depositor (so they can use the escrow)
+    xlm_admin.mint(&depositor, &200_000_000i128);
+    client.stake(&depositor, &200_000_000i128);
 
     (contract_addr, token_addr, token_client, depositor, recipient, platform, dispute)
 }
@@ -67,7 +78,6 @@ fn test_deposit_and_release() {
     let eid = escrow_id(&env, "skill1:user1");
     let skill = escrow_id(&env, "skill1");
 
-    // Deposit
     client.deposit(
         &depositor,
         &token_addr,
@@ -79,31 +89,26 @@ fn test_deposit_and_release() {
         &eid,
     );
 
-    // Depositor balance should be 0 now
     assert_eq!(token_client.balance(&depositor), 0);
-    // Contract holds the funds
     assert_eq!(token_client.balance(&contract_addr), amount);
 
-    // Release (called by platform)
     client.release(&platform, &eid);
 
-    // Expected splits
-    let expected_recipient = amount * 70 / 100; // 700
-    let expected_platform = amount * 20 / 100;  // 200
-    let expected_dispute = amount - expected_recipient - expected_platform; // 100
+    let expected_recipient = amount * 70 / 100;
+    let expected_platform = amount * 20 / 100;
+    let expected_dispute = amount - expected_recipient - expected_platform;
 
     assert_eq!(token_client.balance(&recipient), expected_recipient);
     assert_eq!(token_client.balance(&platform), expected_platform);
     assert_eq!(token_client.balance(&dispute), expected_dispute);
     assert_eq!(token_client.balance(&contract_addr), 0);
 
-    // EscrowData should be marked released
     let data = client.get_escrow(&eid);
     assert!(data.released);
 }
 
 // ---------------------------------------------------------------------------
-// Test 2: deposit → refund — depositor gets everything back
+// Test 2: deposit → refund
 // ---------------------------------------------------------------------------
 
 #[test]
@@ -131,21 +136,20 @@ fn test_deposit_and_refund() {
         &eid,
     );
 
-    assert_eq!(token_client.balance(&depositor), 500); // had 1000, deposited 500
+    assert_eq!(token_client.balance(&depositor), 500);
     assert_eq!(token_client.balance(&contract_addr), amount);
 
-    // Refund
     client.refund(&depositor, &eid);
 
-    assert_eq!(token_client.balance(&depositor), 1_000); // fully restored
+    assert_eq!(token_client.balance(&depositor), 1_000);
     assert_eq!(token_client.balance(&contract_addr), 0);
 
     let data = client.get_escrow(&eid);
-    assert!(data.released); // consumed
+    assert!(data.released);
 }
 
 // ---------------------------------------------------------------------------
-// Test 3: unauthorized release attempt → should panic
+// Test 3: unauthorized release → panic
 // ---------------------------------------------------------------------------
 
 #[test]
@@ -174,12 +178,12 @@ fn test_unauthorized_release_panics() {
         &eid,
     );
 
-    // Attempt release from depositor (not platform) — must panic
+    // Attempt release from depositor — must panic
     client.release(&depositor, &eid);
 }
 
 // ---------------------------------------------------------------------------
-// Test 4: double refund is rejected
+// Test 4: double refund → panic
 // ---------------------------------------------------------------------------
 
 #[test]
@@ -208,11 +212,11 @@ fn test_double_refund_panics() {
     );
 
     client.refund(&depositor, &eid);
-    client.refund(&depositor, &eid); // second call must panic
+    client.refund(&depositor, &eid);
 }
 
 // ---------------------------------------------------------------------------
-// Test 5: release after release is rejected
+// Test 5: double release → panic
 // ---------------------------------------------------------------------------
 
 #[test]
@@ -241,5 +245,23 @@ fn test_double_release_panics() {
     );
 
     client.release(&platform, &eid);
-    client.release(&platform, &eid); // second call must panic
+    client.release(&platform, &eid);
+}
+
+// ---------------------------------------------------------------------------
+// Test 6: stake check
+// ---------------------------------------------------------------------------
+
+#[test]
+fn test_stake_query() {
+    let env = Env::default();
+    env.mock_all_auths();
+
+    let (contract_addr, _token_addr, _token_client, depositor, _recipient, _platform, _dispute) =
+        setup_escrow(&env);
+
+    let client = EscrowContractClient::new(&env, &contract_addr);
+
+    // depositor was staked 200_000_000 in setup
+    assert_eq!(client.get_stake(&depositor), 200_000_000);
 }
