@@ -96,6 +96,10 @@ Test hesabı, Friendbot, TX izleme.
 https://developers.stellar.org/docs
 Soroban smart contract deployment, USDC SAC işlemleri.
 
+**Stellar Docs Monorepo (`stellar-docs`)**
+https://github.com/stellar/stellar-docs
+Resmi Stellar dokümantasyon kaynağı. Bu repo lokal olarak `.external/stellar-docs` içine klonlanabilir; GitHub ajanları bu link üzerinden doğrudan `stellar-docs` içeriğini referans almalı.
+
 **Pinata IPFS**
 https://pinata.cloud
 Skill JSON'ları + MCP standartları burada saklanacak.
