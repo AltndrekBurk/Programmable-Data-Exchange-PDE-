@@ -9,6 +9,8 @@
 //   4. Server calls /settle → funds actually move
 // ---------------------------------------------------------------------------
 
+import type { Context, Next } from 'hono'
+
 // Read lazily (after env is loaded) — don't use top-level const for process.env
 const cfg = () => ({
   facilitator: process.env.X402_FACILITATOR_URL ?? 'https://channels.openzeppelin.com/x402/testnet',
@@ -155,5 +157,30 @@ export async function settlePayment(
     }
   } catch (err) {
     console.warn('[x402] Settle error (non-critical):', err)
+  }
+}
+
+
+/**
+ * Hono middleware: enforces X402 payment header for a protected resource.
+ * On success it stores payment data on context vars for settlement.
+ */
+export function createX402Middleware(resourceBuilder: (c: Context) => string) {
+  return async (c: Context, next: Next) => {
+    const requirements = buildRequirements(resourceBuilder(c))
+    const paymentHeader = c.req.header('X-PAYMENT')
+
+    if (!paymentHeader) {
+      return c.json(requirements, 402)
+    }
+
+    const paymentCheck = await verifyPayment(paymentHeader, requirements)
+    if (!paymentCheck.valid) {
+      return c.json({ error: paymentCheck.error || 'Payment verification failed' }, 402)
+    }
+
+    c.set('x402PaymentHeader' as never, paymentHeader as never)
+    c.set('x402Requirements' as never, requirements as never)
+    await next()
   }
 }

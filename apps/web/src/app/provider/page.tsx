@@ -4,6 +4,9 @@ import { useState } from "react";
 import { useSession } from "next-auth/react";
 import { useRouter } from "next/navigation";
 import Button from "@/components/ui/Button";
+import { apiFetch } from "@/lib/api";
+import { uploadJsonToIpfs } from "@/lib/ipfs";
+import { buildManageDataTx, signAndSubmitTx } from "@/lib/stellar";
 
 export default function ProviderRegistrationPage() {
   const { data: session, status } = useSession();
@@ -44,31 +47,57 @@ export default function ProviderRegistrationPage() {
       return;
     }
 
+    const stellarAddress = (session?.user as { stellarAddress?: string })?.stellarAddress;
+    if (!stellarAddress) {
+      setError("Freighter wallet bağlantısı bulunamadı");
+      return;
+    }
+
     setIsSubmitting(true);
     setError(null);
 
     try {
-      const apiUrl = process.env.NEXT_PUBLIC_API_URL || "http://localhost:3001";
-      const stellarAddress = (session?.user as { stellarAddress?: string })?.stellarAddress;
+      // 1) Frontend -> Pinata HTTPS API
+      const providerData = {
+        stellarAddress,
+        dataSources: ["custom"],
+        supportedDataDescription: capabilities,
+        openclawUrl,
+        channel,
+        contactInfo: openclawToken || "pending",
+        policy: { capabilities },
+        registeredAt: new Date().toISOString(),
+      };
 
-      const res = await fetch(`${apiUrl}/api/provider/register`, {
+      const ipfsHash = await uploadJsonToIpfs(providerData, {
+        name: `provider-${stellarAddress.slice(0, 8)}.json`,
+        keyvalues: { type: "provider" },
+      });
+
+      // 2) Frontend -> Stellar (Freighter signed)
+      const indexKey = `pr:${stellarAddress.slice(0, 24)}`;
+      const xdr = await buildManageDataTx(stellarAddress, indexKey, ipfsHash);
+      const txHash = await signAndSubmitTx(xdr);
+
+      // 3) Backend notify only
+      await apiFetch("/api/notify/provider", {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           stellarAddress,
+          ipfsHash,
+          txHash,
+          dataSources: ["custom"],
           supportedDataDescription: capabilities,
           openclawUrl,
           channel,
           contactInfo: openclawToken || "pending",
+          policy: { capabilities },
         }),
-      });
+      }).catch((err) => console.warn("[provider] notify failed:", err));
 
-      if (!res.ok) {
-        const data = await res.json().catch(() => ({}));
-        throw new Error(data.error || `Server error: ${res.status}`);
-      }
-
-      if (openclawToken && stellarAddress) {
+      // still backend-only sensitive bot token persistence
+      if (openclawToken) {
+        const apiUrl = process.env.NEXT_PUBLIC_API_URL || "http://localhost:3001";
         await fetch(`${apiUrl}/api/provider/bot-config`, {
           method: "POST",
           headers: { "Content-Type": "application/json" },
@@ -98,12 +127,8 @@ export default function ProviderRegistrationPage() {
             You are now registered as a data provider. Buy Data requests will appear in your Sell Data dashboard.
           </p>
           <div className="flex gap-3 justify-center">
-            <Button onClick={() => router.push("/sell")} variant="primary">
-              Provider Console
-            </Button>
-            <Button onClick={() => router.push("/dashboard")} variant="outline">
-              Dashboard
-            </Button>
+            <Button onClick={() => router.push("/sell")} variant="primary">Provider Console</Button>
+            <Button onClick={() => router.push("/dashboard")} variant="outline">Dashboard</Button>
           </div>
         </div>
       </div>
@@ -115,7 +140,7 @@ export default function ProviderRegistrationPage() {
       <span className="flow-badge">Provider Onboarding</span>
       <h1 className="mt-3 text-3xl font-bold text-slate-100">Register as Provider</h1>
       <p className="mt-2 mb-8 text-sm text-slate-400">
-        Açık metinle hangi veri türlerini, hangi kaynaklardan, hangi koşullarda sağlayabildiğini ve sınırlarını tanımla. Platform bu açıklamayı olduğu gibi kullanır; sabit liste yok.
+        Açıklamayı frontend&apos;den doğrudan IPFS&apos;e yükleyip Freighter ile zincire yazarsın; backend sadece TX hash ile haberdar edilir.
       </p>
 
       <form onSubmit={handleSubmit} className="space-y-6">
@@ -125,7 +150,7 @@ export default function ProviderRegistrationPage() {
               Sağlayabildiğin veri ve kaynaklar
             </h3>
             <p className="text-xs text-slate-500 mb-2">
-              Örnek: Fitbit günlük adım, Strava koşu aktiviteleri, belirli banka API&apos;leri, sadece 2024 sonrası veri, maksimum 90 gün geriye dönük, vb. Cihaz verileri varsa (GPS, sensör vb.) onları da burada tarif et.
+              Örnek: Fitbit günlük adım, Strava koşu aktiviteleri, belirli banka API&apos;leri, sadece 2024 sonrası veri.
             </p>
             <textarea
               className="flow-input min-h-[140px]"
@@ -138,43 +163,21 @@ export default function ProviderRegistrationPage() {
         </div>
 
         <div className="flow-surface rounded-xl p-6 space-y-4">
-          <h3 className="text-sm font-semibold uppercase tracking-wide text-emerald-300">
-            OpenClaw Bot Configuration
-          </h3>
-          <p className="text-xs text-slate-500">
-            Your self-hosted AI gateway. Listens for consent events on Stellar, fetches data, generates ZK proofs.
-          </p>
+          <h3 className="text-sm font-semibold uppercase tracking-wide text-emerald-300">OpenClaw Bot Configuration</h3>
 
           <div>
             <label className="flow-label-sm">Bot Instance URL</label>
-            <input
-              type="url"
-              value={openclawUrl}
-              onChange={(e) => setOpenclawUrl(e.target.value)}
-              placeholder="https://your-openclaw-instance.com"
-              className="flow-input"
-              required
-            />
+            <input type="url" value={openclawUrl} onChange={(e) => setOpenclawUrl(e.target.value)} placeholder="https://your-openclaw-instance.com" className="flow-input" required />
           </div>
 
           <div>
             <label className="flow-label-sm">API Token</label>
-            <input
-              type="password"
-              value={openclawToken}
-              onChange={(e) => setOpenclawToken(e.target.value)}
-              placeholder="Bearer token for /hooks/agent endpoint"
-              className="flow-input"
-            />
+            <input type="password" value={openclawToken} onChange={(e) => setOpenclawToken(e.target.value)} placeholder="Bearer token for /hooks/agent endpoint" className="flow-input" />
           </div>
 
           <div>
             <label className="flow-label-sm">Notification Channel</label>
-            <select
-              value={channel}
-              onChange={(e) => setChannel(e.target.value as typeof channel)}
-              className="flow-input"
-            >
+            <select value={channel} onChange={(e) => setChannel(e.target.value as typeof channel)} className="flow-input">
               <option value="whatsapp">WhatsApp</option>
               <option value="telegram">Telegram</option>
               <option value="discord">Discord</option>
@@ -184,14 +187,7 @@ export default function ProviderRegistrationPage() {
 
         {error && <div className="flow-error">{error}</div>}
 
-        <Button
-          type="submit"
-          variant="primary"
-          size="lg"
-          className="w-full"
-          isLoading={isSubmitting}
-          disabled={isSubmitting}
-        >
+        <Button type="submit" variant="primary" size="lg" className="w-full" isLoading={isSubmitting} disabled={isSubmitting}>
           Register as Data Provider
         </Button>
       </form>

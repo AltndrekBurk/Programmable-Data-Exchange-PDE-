@@ -4,6 +4,8 @@ import { useSession } from "next-auth/react";
 import { useRouter } from "next/navigation";
 import { useEffect, useState } from "react";
 import { apiFetch } from "@/lib/api";
+import { fetchFromIpfs } from "@/lib/ipfs";
+import { readAccountData } from "@/lib/stellar";
 import Button from "@/components/ui/Button";
 import { useToast } from "@/components/ui/Toast";
 import { useFreighter } from "@/hooks/useFreighter";
@@ -47,8 +49,9 @@ export default function TasksPage() {
   useEffect(() => {
     if (status !== "authenticated") return;
 
-    apiFetch<{ skills: SkillItem[] }>("/api/skills")
-      .then((data) => {
+    const loadTasks = async () => {
+      try {
+        const data = await apiFetch<{ skills: SkillItem[] }>("/api/skills");
         const mapped: Task[] = (data.skills || []).map((s) => ({
           id: s.id,
           skillId: s.id,
@@ -61,13 +64,61 @@ export default function TasksPage() {
           expiresAt: s.expiresAt,
         }));
         setTasks(mapped);
-      })
-      .catch((err: unknown) => {
+        return;
+      } catch (err) {
+        console.warn("[tasks] API task list unavailable, falling back to on-chain index:", err);
+      }
+
+      try {
+        const platformAddress = process.env.NEXT_PUBLIC_PLATFORM_STELLAR_ADDRESS;
+        if (!platformAddress) throw new Error("NEXT_PUBLIC_PLATFORM_STELLAR_ADDRESS missing");
+
+        const accountData = await readAccountData(platformAddress);
+        const skillEntries = Array.from(accountData.entries())
+          .filter(([k, v]) => k.startsWith("sk:") && v)
+          .slice(0, 50);
+
+        const chainTasks: Task[] = [];
+        for (const [, cid] of skillEntries) {
+          try {
+            const skill = await fetchFromIpfs<{
+              id?: string;
+              title?: string;
+              dataSource?: string;
+              metrics?: string[];
+              rewardPerUser?: number;
+              durationDays?: number;
+              expiresAt?: string;
+            }>(cid);
+
+            const skillId = skill.id || crypto.randomUUID();
+            chainTasks.push({
+              id: skillId,
+              skillId,
+              title: skill.title || "On-chain skill",
+              dataSource: skill.dataSource || "unknown",
+              metrics: skill.metrics || [],
+              rewardPerUser: Number(skill.rewardPerUser || 0),
+              durationDays: Number(skill.durationDays || 30),
+              status: "pending",
+              expiresAt: skill.expiresAt || new Date(Date.now() + 7 * 86400000).toISOString(),
+            });
+          } catch {
+            // skip invalid cid payloads
+          }
+        }
+
+        setTasks(chainTasks);
+      } catch (err) {
         const msg = err instanceof Error ? err.message : "Failed to load tasks";
         toast(msg, "error");
         setTasks([]);
-      })
-      .finally(() => setLoading(false));
+      } finally {
+        setLoading(false);
+      }
+    };
+
+    loadTasks();
   }, [status, toast]);
 
   const handleDecision = async (

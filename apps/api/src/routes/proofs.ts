@@ -4,7 +4,7 @@ import { zValidator } from '@hono/zod-validator'
 import { verifyDataProof } from '@dataeconomy/reclaim'
 import crypto from 'node:crypto'
 import type { StorageService, EscrowAdapter } from '@dataeconomy/storage'
-import { buildRequirements, verifyPayment, settlePayment } from '../lib/x402.js'
+import { createX402Middleware, settlePayment } from '../lib/x402.js'
 import { notifyProofAccepted } from '../lib/openclaw.js'
 
 export function createProofsRouter(storage: StorageService, escrow: EscrowAdapter) {
@@ -40,30 +40,19 @@ export function createProofsRouter(storage: StorageService, escrow: EscrowAdapte
 
   // POST /api/proofs/submit
   // Requires X-PAYMENT header (X402 — 0.01 USDC spam prevention)
-  router.post('/submit', zValidator('json', submitProofSchema), async (c) => {
-    // -----------------------------------------------------------------------
-    // X402 — verify payment header
-    // -----------------------------------------------------------------------
-    const paymentHeader = c.req.header('X-PAYMENT')
-    const apiBaseUrl =
-      process.env.API_BASE_URL ||
-      process.env.NEXT_PUBLIC_API_URL ||
-      'http://localhost:3001'
-    const resourceUrl = `${apiBaseUrl}/api/proofs/submit`
-    const requirements = buildRequirements(resourceUrl)
-
-    if (!paymentHeader) {
-      return c.json(requirements, 402)
-    }
-
-    const paymentResult = await verifyPayment(paymentHeader, requirements)
-    if (!paymentResult.valid) {
-      return c.json({
-        error: 'Payment verification failed',
-        detail: paymentResult.error,
-        requirements,
-      }, 402)
-    }
+  router.post(
+    '/submit',
+    createX402Middleware((c) => {
+      const apiBaseUrl =
+        process.env.API_BASE_URL ||
+        process.env.NEXT_PUBLIC_API_URL ||
+        'http://localhost:3001'
+      return `${apiBaseUrl}/api/proofs/submit`
+    }),
+    zValidator('json', submitProofSchema),
+    async (c) => {
+    const paymentHeader = c.get('x402PaymentHeader' as never) as string
+    const requirements = c.get('x402Requirements' as never) as Parameters<typeof settlePayment>[1]
 
     // -----------------------------------------------------------------------
     // ZK Proof verification
@@ -263,10 +252,19 @@ export function createProofsRouter(storage: StorageService, escrow: EscrowAdapte
             return c.json({ error: 'Provider Stellar adresi bulunamadi' }, 400)
           }
         } else {
+          const skill = await storage.getSkill(body.skillId)
+          const mcp = skill?.mcpId ? await storage.getMcp(skill.mcpId) : null
+          const hasMcpFee = !!mcp?.creatorAddress && (mcp?.usageFee ?? 0) > 0
+          const mcpFeeBps = hasMcpFee
+            ? Math.min(2000, Math.max(0, Math.round(((mcp!.usageFee! / targetEscrow.totalBudget) * 10_000))))
+            : 0
+
           const released = await escrow.release({
             escrowId: targetEscrow.id,
             providerAddress,
             proofHash,
+            mcpCreatorAddress: hasMcpFee ? mcp!.creatorAddress : undefined,
+            mcpFeeBps: hasMcpFee ? mcpFeeBps : undefined,
           })
 
           escrowResult = {
