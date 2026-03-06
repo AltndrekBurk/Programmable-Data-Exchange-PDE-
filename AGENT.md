@@ -737,3 +737,44 @@ A: Yes! Create a custom-provider tool following the template. Ensure the API end
 ## Version History
 
 - **v1.0** (2026-03-01) — Initial OpenClaw integration guide. Covers consent flow, MCP tools, proof generation, X402 payment, Horizon SSE listener.
+
+---
+
+## Production Runbook (OpenClaw + Chain + IPFS + X402)
+
+### Canonical data plane
+1. Buyer/MCP creator publishes JSON directly to **IPFS (Pinata HTTPS API)** from frontend.
+2. Frontend writes CID index to **Stellar** with Freighter signature (manage_data / contract call).
+3. Frontend sends backend awareness notification (`/api/notify/*`) with `{txHash, ipfsHash}` only.
+
+### Seller/OpenClaw control plane
+1. OpenClaw listens to Stellar (Horizon/Soroban RPC) for consent + escrow events.
+2. OpenClaw resolves skill/policy/MCP CIDs from on-chain index keys.
+3. OpenClaw downloads CID payloads from IPFS gateway and validates policy constraints.
+4. OpenClaw runs data extraction tool (MVP: API + zkTLS/Reclaim path), encrypts payload.
+5. OpenClaw submits proof+encrypted delivery to facilitator `/api/proofs/submit` with `X-PAYMENT`.
+
+### X402 enforcement (mandatory in prod)
+- `/api/proofs/submit` is payment-gated with x402 middleware.
+- Missing/invalid `X-PAYMENT` => HTTP 402 with payment requirements.
+- Successful proof pipeline triggers facilitator `/settle` call.
+
+### Escrow + MCP creator payout
+- Escrow release is executed via Soroban contract calls.
+- For marketplace-backed skills, release uses MCP-aware split function so creator fee is distributed in-contract (not manual backend transfer logic).
+- Dispute/refund lifecycle remains contract-driven.
+
+### Delivery security
+- Buyer callback must be HTTPS in production.
+- Facilitator relays encrypted payload; plaintext raw dataset should not persist on facilitator.
+
+
+
+### Buyer-Seller encrypted delivery key model (Production)
+- Buyer creates a delivery keypair locally (X25519 / age / NaCl).
+- Buyer publishes **deliveryPublicKey** inside skill metadata (IPFS + on-chain index).
+- OpenClaw fetches skill metadata, encrypts payload with deliveryPublicKey.
+- Facilitator only relays encryptedPayload + checksum + proofHash to buyer callback.
+- Buyer callback decrypts using buyer private key and validates integrity (`sha256(encryptedPayload)` vs checksum + proofHash binding).
+- HTTPS proxy can terminate TLS but **must not** perform payload decryption.
+- Facilitator must never persist plaintext payload.

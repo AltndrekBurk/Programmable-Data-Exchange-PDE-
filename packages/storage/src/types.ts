@@ -23,6 +23,8 @@ export interface StoredSkill {
   totalBudget: number
   targetCount: number
   callbackUrl?: string
+  /** Buyer callback encryption public key (X25519/age/NaCl public key) */
+  deliveryPublicKey?: string
   /** Optional MCP standard ID this skill was built from */
   mcpId?: string
   /** Optional policy used during proof validation and delivery */
@@ -155,6 +157,9 @@ export interface EscrowRecord {
   providerShare: number
   platformShare: number
   disputePool: number
+  /** Optional MCP creator payout (deducted from platform share) */
+  mcpCreatorAddress?: string
+  mcpCreatorShare?: number
   status: 'locked' | 'releasing' | 'released' | 'disputed' | 'refunded'
   createdAt: string
   updatedAt: string

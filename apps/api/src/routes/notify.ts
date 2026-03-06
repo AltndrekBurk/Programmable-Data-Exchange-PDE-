@@ -140,6 +140,7 @@ export function createNotifyRouter(storage: StorageService) {
       totalBudget: z.number(),
       targetCount: z.number(),
       callbackUrl: z.string().optional(),
+      deliveryPublicKey: z.string().optional(),
       mcpId: z.string().optional(),
     }).passthrough(),
   })
@@ -163,6 +164,7 @@ export function createNotifyRouter(storage: StorageService) {
       totalBudget: body.data.totalBudget,
       targetCount: body.data.targetCount,
       callbackUrl: body.data.callbackUrl,
+      deliveryPublicKey: body.data.deliveryPublicKey,
       mcpId: body.data.mcpId,
       expiresAt: new Date(Date.now() + body.data.durationDays * 24 * 60 * 60 * 1000).toISOString(),
       createdAt: new Date().toISOString(),
@@ -211,7 +213,7 @@ export function createNotifyRouter(storage: StorageService) {
     openclawUrl: z.string().optional(),
     channel: z.enum(['whatsapp', 'telegram', 'discord']),
     contactInfo: z.string(),
-    policy: z.record(z.unknown()).optional(),
+    policy: z.record(z.string(), z.unknown()).optional(),
   })
 
   router.post('/provider', zValidator('json', providerNotifySchema), async (c) => {
@@ -259,7 +261,7 @@ export function createNotifyRouter(storage: StorageService) {
     stellarAddress: z.string().startsWith('G').length(56),
     ipfsHash: z.string().min(1),
     txHash: z.string().min(1),
-    policy: z.record(z.unknown()),
+    policy: z.record(z.string(), z.unknown()),
   })
 
   router.post('/policy', zValidator('json', policyNotifySchema), async (c) => {

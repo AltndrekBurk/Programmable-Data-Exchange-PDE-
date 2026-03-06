@@ -31,6 +31,8 @@ export interface ReleaseParams {
   escrowId: string
   providerAddress: string
   proofHash: string
+  mcpCreatorAddress?: string
+  mcpFeeBps?: number
 }
 
 export interface EscrowAdapter {
@@ -177,15 +179,23 @@ class SorobanEscrowAdapter implements EscrowAdapter {
     let releaseTxHash: string | undefined
     try {
       const escrowIdClean = params.escrowId.replace(/-/g, '').slice(0, 32)
+      const hasMcpSplit = !!params.mcpCreatorAddress && (params.mcpFeeBps ?? 0) > 0
       releaseTxHash = await submitSorobanTx(
         this.server,
         this.keypair,
         this.contractId,
-        'release',
-        [
-          nativeToScVal(Address.fromString(this.keypair.publicKey()), { type: 'address' }),
-          nativeToScVal(escrowIdClean, { type: 'string' }),
-        ],
+        hasMcpSplit ? 'release_with_mcp_fee' : 'release',
+        hasMcpSplit
+          ? [
+              nativeToScVal(Address.fromString(this.keypair.publicKey()), { type: 'address' }),
+              nativeToScVal(escrowIdClean, { type: 'string' }),
+              nativeToScVal(Address.fromString(params.mcpCreatorAddress!), { type: 'address' }),
+              nativeToScVal(params.mcpFeeBps ?? 0, { type: 'u32' }),
+            ]
+          : [
+              nativeToScVal(Address.fromString(this.keypair.publicKey()), { type: 'address' }),
+              nativeToScVal(escrowIdClean, { type: 'string' }),
+            ],
       )
     } catch (err) {
       console.error('[escrow] Soroban release failed:', err)
@@ -193,12 +203,18 @@ class SorobanEscrowAdapter implements EscrowAdapter {
     }
 
     const releaseAmount = record.locked
+    const rawPlatformShare = releaseAmount * 0.20
+    const mcpCreatorShare = params.mcpFeeBps && params.mcpCreatorAddress
+      ? Math.min(rawPlatformShare, (releaseAmount * params.mcpFeeBps) / 10_000)
+      : 0
     const updated = await this.storage.updateEscrow(params.escrowId, {
       released: releaseAmount,
       locked: 0,
       providerShare: releaseAmount * 0.70,
-      platformShare: releaseAmount * 0.20,
+      platformShare: rawPlatformShare - mcpCreatorShare,
       disputePool: releaseAmount * 0.10,
+      mcpCreatorAddress: params.mcpCreatorAddress,
+      mcpCreatorShare,
       status: 'released',
       updatedAt: new Date().toISOString(),
       txHash: releaseTxHash,

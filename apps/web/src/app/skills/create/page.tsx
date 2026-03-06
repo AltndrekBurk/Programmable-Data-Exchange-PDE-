@@ -1,10 +1,11 @@
 "use client";
 
-import { Suspense } from "react";
+import { Suspense, useEffect, useState } from "react";
 import { useSession } from "next-auth/react";
 import { useRouter, useSearchParams } from "next/navigation";
-import { useEffect, useState } from "react";
 import { apiFetch } from "@/lib/api";
+import { uploadJsonToIpfs } from "@/lib/ipfs";
+import { buildIndexKey, buildManageDataTx, signAndSubmitTx } from "@/lib/stellar";
 import Button from "@/components/ui/Button";
 
 const DATA_SOURCES = [
@@ -21,10 +22,11 @@ export default function CreateSkillPage() {
 }
 
 function CreateSkillInner() {
-  const { status } = useSession();
+  const { data: session, status } = useSession();
   const router = useRouter();
   const searchParams = useSearchParams();
   const mcpId = searchParams.get("mcp");
+  const stellarAddress = (session?.user as { stellarAddress?: string })?.stellarAddress;
 
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -32,6 +34,7 @@ function CreateSkillInner() {
     skillId: string;
     ipfsHash: string;
     escrowAddress: string;
+    stellarTx: string;
   } | null>(null);
 
   useEffect(() => {
@@ -43,32 +46,58 @@ function CreateSkillInner() {
     setSubmitting(true);
     setError(null);
 
-    const form = new FormData(e.currentTarget);
-    const metricsRaw = form.get("metrics") as string;
+    if (!stellarAddress) {
+      setError("Freighter cüzdan bağlı değil.");
+      setSubmitting(false);
+      return;
+    }
 
-    const body = {
-      title: form.get("title") as string,
-      description: form.get("description") as string,
-      dataSource: form.get("dataSource") as string,
+    const form = new FormData(e.currentTarget);
+    const metricsRaw = String(form.get("metrics") ?? "");
+
+    const skillId = crypto.randomUUID();
+    const skillData = {
+      id: skillId,
+      title: String(form.get("title") ?? ""),
+      description: String(form.get("description") ?? ""),
+      dataSource: String(form.get("dataSource") ?? "custom"),
       metrics: metricsRaw.split(",").map((m) => m.trim()).filter(Boolean),
       durationDays: Number(form.get("durationDays")),
       rewardPerUser: Number(form.get("rewardPerUser")),
       totalBudget: Number(form.get("totalBudget")),
       targetCount: Number(form.get("targetCount")),
-      callbackUrl: (form.get("callbackUrl") as string) || undefined,
+      callbackUrl: (String(form.get("callbackUrl") || "") || undefined),
+      deliveryPublicKey: (String(form.get("deliveryPublicKey") || "") || undefined),
       mcpId: mcpId || undefined,
+      createdAt: new Date().toISOString(),
     };
 
     try {
-      const res = await apiFetch<{
-        skillId: string;
-        ipfsHash: string;
-        escrowAddress: string;
-      }>("/api/skills", {
-        method: "POST",
-        body: JSON.stringify(body),
+      // 1) Client -> Pinata HTTPS API
+      const ipfsHash = await uploadJsonToIpfs(skillData, {
+        name: `skill-${skillId.slice(0, 8)}.json`,
+        keyvalues: { type: "skill", id: skillId.slice(0, 32) },
       });
-      setResult(res);
+
+      // 2) Client -> Stellar write (Freighter sign)
+      const indexKey = buildIndexKey("skill", skillId);
+      const xdr = await buildManageDataTx(stellarAddress, indexKey, ipfsHash);
+      const txHash = await signAndSubmitTx(xdr);
+
+      // 3) Backend notify only (facilitator awareness)
+      await apiFetch("/api/notify/skill", {
+        method: "POST",
+        body: JSON.stringify({
+          skillId,
+          ipfsHash,
+          txHash,
+          stellarAddress,
+          data: skillData,
+        }),
+      }).catch((err) => console.warn("[skills/create] notify failed:", err));
+
+      const escrowAddress = process.env.NEXT_PUBLIC_ESCROW_ADDRESS || "DEPLOY_ESCROW_FIRST";
+      setResult({ skillId, ipfsHash, escrowAddress, stellarTx: txHash });
     } catch (err) {
       setError(err instanceof Error ? err.message : "Something went wrong");
     } finally {
@@ -83,48 +112,30 @@ function CreateSkillInner() {
       <div className="mx-auto max-w-2xl px-4 py-12">
         <div className="flow-surface rounded-xl p-6">
           <div className="mb-4 flex items-center justify-between">
-            <h2 className="text-lg font-semibold text-emerald-300">
-              Data Request Created
-            </h2>
-            <span className="flow-badge">Active</span>
+            <h2 className="text-lg font-semibold text-emerald-300">Data Request Created</h2>
+            <span className="flow-badge">On-chain</span>
           </div>
-          <p className="mb-4 text-sm text-slate-400">
-            Deposit USDC to the escrow address to activate the program. Matching providers will be notified automatically.
-          </p>
           <dl className="space-y-3 text-sm">
             <div>
               <dt className="text-slate-400 font-medium">Skill ID</dt>
-              <dd className="font-mono text-slate-100">{result.skillId}</dd>
+              <dd className="font-mono text-slate-100 break-all">{result.skillId}</dd>
             </div>
             <div>
               <dt className="text-slate-400 font-medium">IPFS Hash</dt>
-              <dd className="font-mono text-slate-100">{result.ipfsHash}</dd>
+              <dd className="font-mono text-slate-100 break-all">{result.ipfsHash}</dd>
+            </div>
+            <div>
+              <dt className="text-slate-400 font-medium">Stellar TX</dt>
+              <dd className="font-mono text-slate-100 break-all">{result.stellarTx}</dd>
             </div>
             <div>
               <dt className="text-slate-400 font-medium">Escrow Address</dt>
-              <dd className="font-mono text-slate-100 break-all">
-                {result.escrowAddress}
-              </dd>
+              <dd className="font-mono text-slate-100 break-all">{result.escrowAddress}</dd>
             </div>
           </dl>
           <div className="mt-6 flex gap-3">
-            <Button
-              variant="primary"
-              size="sm"
-              onClick={() => router.push("/dashboard")}
-            >
-              Go to Dashboard
-            </Button>
-            <Button
-              variant="outline"
-              size="sm"
-              onClick={() => {
-                setResult(null);
-                setError(null);
-              }}
-            >
-              Create Another
-            </Button>
+            <Button variant="primary" size="sm" onClick={() => router.push("/dashboard")}>Go to Dashboard</Button>
+            <Button variant="outline" size="sm" onClick={() => { setResult(null); setError(null); }}>Create Another</Button>
           </div>
         </div>
       </div>
@@ -134,13 +145,11 @@ function CreateSkillInner() {
   return (
     <div className="mx-auto max-w-2xl px-4 py-10">
       <span className="flow-badge">Skill Builder</span>
-      <h1 className="mt-3 text-3xl font-bold text-slate-100">
-        Buy Data
-      </h1>
+      <h1 className="mt-3 text-3xl font-bold text-slate-100">Buy Data</h1>
       <p className="mt-2 mb-8 text-sm text-slate-400">
         {mcpId
-          ? `Using marketplace standard #${mcpId.slice(0, 8)}. Customize the parameters below.`
-          : "Define what data you need. Matching providers will be notified and can grant consent."}
+          ? `Using marketplace standard #${mcpId.slice(0, 8)}. Customize below and publish directly to IPFS + Stellar.`
+          : "Define what data you need. Skill is uploaded from frontend and indexed on-chain with your wallet."}
       </p>
 
       {error && <div className="flow-error mb-6">{error}</div>}
@@ -148,23 +157,12 @@ function CreateSkillInner() {
       <form onSubmit={handleSubmit} className="flow-surface space-y-6 rounded-xl p-6">
         <div>
           <label className="flow-label">Title</label>
-          <input
-            name="title"
-            required
-            className="flow-input"
-            placeholder="Fitbit 90-Day Step Data"
-          />
+          <input name="title" required className="flow-input" placeholder="Fitbit 90-Day Step Data" />
         </div>
 
         <div>
           <label className="flow-label">Description</label>
-          <textarea
-            name="description"
-            required
-            rows={3}
-            className="flow-input"
-            placeholder="Describe what data you need and why..."
-          />
+          <textarea name="description" required rows={3} className="flow-input" placeholder="Describe what data you need and why..." />
         </div>
 
         <div className="grid grid-cols-2 gap-4">
@@ -178,78 +176,43 @@ function CreateSkillInner() {
           </div>
           <div>
             <label className="flow-label">Duration (days)</label>
-            <input
-              name="durationDays"
-              type="number"
-              required
-              min={1}
-              max={365}
-              defaultValue={30}
-              className="flow-input"
-            />
+            <input name="durationDays" type="number" required min={1} className="flow-input" defaultValue={30} />
+          </div>
+        </div>
+
+        <div className="grid grid-cols-2 gap-4">
+          <div>
+            <label className="flow-label">Reward / User (USDC)</label>
+            <input name="rewardPerUser" type="number" required step="0.01" min={0.01} className="flow-input" defaultValue={1.5} />
+          </div>
+          <div>
+            <label className="flow-label">Target Count</label>
+            <input name="targetCount" type="number" required min={1} className="flow-input" defaultValue={100} />
           </div>
         </div>
 
         <div>
-          <label className="flow-label">Metrics (comma-separated)</label>
-          <input
-            name="metrics"
-            required
-            className="flow-input"
-            placeholder="steps, heart_rate, calories"
-          />
+          <label className="flow-label">Total Budget (USDC)</label>
+          <input name="totalBudget" type="number" required step="0.01" min={0.01} className="flow-input" defaultValue={150} />
         </div>
 
-        <div className="grid grid-cols-3 gap-4">
-          <div>
-            <label className="flow-label">Reward per User (USDC)</label>
-            <input
-              name="rewardPerUser"
-              type="number"
-              required
-              min={0.01}
-              step={0.01}
-              defaultValue={1.5}
-              className="flow-input"
-            />
-          </div>
-          <div>
-            <label className="flow-label">Total Budget (USDC)</label>
-            <input
-              name="totalBudget"
-              type="number"
-              required
-              min={1}
-              step={0.01}
-              defaultValue={150}
-              className="flow-input"
-            />
-          </div>
-          <div>
-            <label className="flow-label">Target Providers</label>
-            <input
-              name="targetCount"
-              type="number"
-              required
-              min={1}
-              defaultValue={100}
-              className="flow-input"
-            />
-          </div>
+        <div>
+          <label className="flow-label">Metrics (comma separated)</label>
+          <input name="metrics" className="flow-input" placeholder="steps, heart_rate, calories" />
         </div>
 
         <div>
           <label className="flow-label">Callback URL (optional)</label>
-          <input
-            name="callbackUrl"
-            type="url"
-            className="flow-input"
-            placeholder="https://your-api.example/webhook/data-ready"
-          />
+          <input name="callbackUrl" type="url" className="flow-input" placeholder="https://your-api.example/webhook/data-ready" />
         </div>
 
-        <Button type="submit" isLoading={submitting} className="w-full">
-          Create Request &amp; Upload to IPFS
+        <div>
+          <label className="flow-label">Delivery Public Key (X25519/age)</label>
+          <input name="deliveryPublicKey" className="flow-input font-mono" placeholder="age1... veya base64 public key" />
+        </div>
+
+        <Button type="submit" variant="primary" size="lg" className="w-full" isLoading={submitting} disabled={submitting}>
+          {submitting ? "Publishing..." : "Publish to IPFS + Stellar"}
         </Button>
       </form>
     </div>

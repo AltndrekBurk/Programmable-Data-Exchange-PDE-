@@ -33,6 +33,7 @@ export function createSkillsRouter(storage: StorageService) {
     totalBudget: z.number().positive(),
     targetCount: z.number().int().positive(),
     callbackUrl: z.string().url().optional(),
+    deliveryPublicKey: z.string().min(16).max(512).optional(),
     mcpId: z.string().optional(),
     conditions: z.string().optional(),
     stakeTxHash: z.string().optional(),
@@ -86,6 +87,7 @@ export function createSkillsRouter(storage: StorageService) {
       totalBudget: body.totalBudget,
       targetCount: body.targetCount,
       callbackUrl: body.callbackUrl,
+      deliveryPublicKey: body.deliveryPublicKey,
       mcpId: body.mcpId,
       policy: {
         maxProofAgeHours: body.policy?.maxProofAgeHours ?? 24,

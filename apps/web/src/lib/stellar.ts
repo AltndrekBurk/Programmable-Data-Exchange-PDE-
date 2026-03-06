@@ -8,6 +8,7 @@
 import * as StellarSdk from "@stellar/stellar-sdk";
 
 export const HORIZON_URL = "https://horizon-testnet.stellar.org";
+export const SOROBAN_RPC_URL = process.env.NEXT_PUBLIC_SOROBAN_RPC_URL || "https://soroban-testnet.stellar.org";
 export const NETWORK_PASSPHRASE = "Test SDF Network ; September 2015";
 
 /** Entity type prefixes — must match packages/storage/src/warm-cache.ts */
@@ -64,8 +65,35 @@ export async function buildManageDataTx(
   return tx.toXDR();
 }
 
+
+async function submitViaRpcOrHorizon(signedTx: StellarSdk.Transaction): Promise<string> {
+  try {
+    const rpc = new StellarSdk.rpc.Server(SOROBAN_RPC_URL, { allowHttp: false });
+    const sent = await rpc.sendTransaction(signedTx);
+
+    if (sent.status === "PENDING" || sent.status === "DUPLICATE") {
+      const hash = sent.hash;
+      for (let i = 0; i < 8; i += 1) {
+        const tx = await rpc.getTransaction(hash);
+        if (tx.status === "SUCCESS") return hash;
+        if (tx.status === "FAILED") {
+          throw new Error(`RPC transaction failed: ${tx.resultXdr || "unknown"}`);
+        }
+        await new Promise((resolve) => setTimeout(resolve, 1200));
+      }
+      return hash;
+    }
+
+    throw new Error(`RPC sendTransaction returned status: ${sent.status}`);
+  } catch (rpcErr) {
+    console.warn("[stellar] RPC submit failed, falling back to Horizon:", rpcErr);
+    const server = new StellarSdk.Horizon.Server(HORIZON_URL);
+    const result = await server.submitTransaction(signedTx);
+    return (result as { hash: string }).hash;
+  }
+}
 /**
- * Sign a TX XDR with Freighter and submit to Horizon.
+ * Sign a TX XDR with Freighter and submit to Stellar RPC (fallback: Horizon).
  * Returns the transaction hash.
  */
 export async function signAndSubmitTx(xdr: string): Promise<string> {
@@ -94,9 +122,7 @@ export async function signAndSubmitTx(xdr: string): Promise<string> {
     StellarSdk.Networks.TESTNET
   );
 
-  const server = new StellarSdk.Horizon.Server(HORIZON_URL);
-  const result = await server.submitTransaction(signedTx);
-  return (result as { hash: string }).hash;
+  return submitViaRpcOrHorizon(signedTx);
 }
 
 /**
