@@ -211,7 +211,7 @@ export function createNotifyRouter(storage: StorageService) {
     openclawUrl: z.string().optional(),
     channel: z.enum(['whatsapp', 'telegram', 'discord']),
     contactInfo: z.string(),
-    policy: z.record(z.unknown()).optional(),
+    policy: z.record(z.string(), z.unknown()).optional(),
   })
 
   router.post('/provider', zValidator('json', providerNotifySchema), async (c) => {
@@ -259,7 +259,7 @@ export function createNotifyRouter(storage: StorageService) {
     stellarAddress: z.string().startsWith('G').length(56),
     ipfsHash: z.string().min(1),
     txHash: z.string().min(1),
-    policy: z.record(z.unknown()),
+    policy: z.record(z.string(), z.unknown()),
   })
 
   router.post('/policy', zValidator('json', policyNotifySchema), async (c) => {
