@@ -66,7 +66,9 @@ export async function buildManageDataTx(
 }
 
 
-async function submitViaRpcOrHorizon(signedTx: StellarSdk.Transaction): Promise<string> {
+async function submitViaRpcOrHorizon(
+  signedTx: StellarSdk.Transaction | StellarSdk.FeeBumpTransaction
+): Promise<string> {
   try {
     const rpc = new StellarSdk.rpc.Server(SOROBAN_RPC_URL, { allowHttp: false });
     const sent = await rpc.sendTransaction(signedTx);
