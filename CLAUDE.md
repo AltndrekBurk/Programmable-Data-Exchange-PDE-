@@ -1,54 +1,53 @@
 # CLAUDE.md
-Proje hafızası ve çalışma talimatları.
-Her session başında bu dosyayı oku, sonra ilgili dokümantasyon linklerini tara.
-Güncelleme: 2026-03-01 | Versiyon: 1.0
+Proje hafızası ve çalışma notları.
+Güncelleme: 2026-03-06 | Versiyon: 1.2
 
----
+## Projenin Kısa Tanımı
 
-## Session Başlangıç Rutini
+dataEconomy, Stellar testnet üzerinde çalışan privacy-preserving veri ekonomisi altyapısıdır.
+Platform yalnızca facilitator rolündedir; ham veriyi tutmaz.
 
-Her yeni session açıldığında sırayla şunları yap:
+## Güncel Mimari Kararlar
 
-1. Bu dosyayı baştan sona oku
-2. FLOW.md'yi oku — tam akış orada
-3. Aşağıdaki "Referans Kaynaklar" bölümündeki linkleri tara — özellikle değişmiş olabilecek API'ler için
-4. Açık sorular bölümüne bak, çözülmüş olanları güncelle
-5. Sonra göreve başla
-
----
-
-## Projenin Özü
-
-Privacy-preserving data economy facilitator on Stellar testnet.
-
-Platform bir **aracı (facilitator)** — ham veriye dokunmaz. Üç temel işlevi var:
-1. **Skill broker** — Veri taleplerini (MCP/skill) yönetir, marketplace işletir
-2. **Proof verifier** — ZK proof'ları doğrular
-3. **Escrow yönetimi** — Ödemeyi otomatik dağıtır
-
-### Marketplace
-Kullanıcılar veri çekme standartları (MCP tool) oluşturup marketplace'e yükler. Başkaları bu standartları kullanırsa creator'a kullanım başı ödeme yapılır. Bu sayede sistem topluluk tarafından genişler.
-
----
+1. **Frontend-first publish:** Skill/MCP payload'ları frontend'den Pinata'ya yüklenir.
+2. **Frontend-first chain write:** CID indexleme Freighter ile frontend'den yapılır.
+3. **Backend awareness-only:** Backend sadece `notify` ile tx/cid farkındalığı ve orchestration yapar.
+4. **X402 enforcement:** Proof submit akışı middleware ile ödeme başlığı doğrulaması alır.
+5. **Contract-level creator split:** MCP creator ücreti backend transferi yerine escrow kontrat release fonksiyonunda dağıtılır.
+6. **Encrypted delivery:** Skill metadata'da `deliveryPublicKey` tutulur; facilitator plaintext görmez.
 
 ## Aktörler
 
-**Veri İsteyen** — Siteye gelir, MCP/skill oluşturur VEYA marketplace'den hazır olanı seçip özelleştirir, USDC escrow'a kilitler, kanıtlanmış veri paketini alır(xk-tls kaynağı ve zamanı). 
+- **Buyer:** Skill oluşturur, escrow lock eder, encrypted sonucu callback ile alır.
+- **Seller/OpenClaw:** On-chain/IPFS verisini okuyup policy'e göre proof + encrypted payload üretir.
+- **MCP Creator:** Marketplace standardı üretir, kontrat dağıtımından creator payı alır.
+- **Facilitator API:** Policy/proof/x402 kontrolleri ve callback yönlendirmesi yapar.
 
-**MCP Creator** — Veri çekme standardı oluşturup marketplace'e yükler (IPFS'e). Birisi standardını kullanırsa kullanım başı kazanç alır. Akıllı kontrat ile kullanılabilirlik değerlendirmesi yapılır.
+## Kod Alanları
 
-**Veri Sağlayıcı** — OpenClaw bot kullanıcısı. Siteye kaydolur, desteklediği veri türünü (API/Device/fhe veri aralığı net değer / zk - seçeneki sorular için) işaretler. Siteden veya WhatsApp/Telegram'dan görev kabul eder. Kabul ederse Stellar'a consent TX yazılır.
+- `apps/web`: buyer/seller/provider/marketplace/tasks/proofs/escrow/dashboard
+- `apps/api/src/routes`: `auth`, `skills`, `notify`, `proofs`, `consent`, `escrow`, `provider`, `marketplace`
+- `packages/storage`: escrow adapter + tipler
+- `contracts/escrow`: release, refund, dispute ve MCP fee split fonksiyonları
+- `AGENT.md`: OpenClaw production runbook
+- `FLOW.md`: uçtan uca flow
 
-**Platform (biz)** — Facilitator. Skill'i IPFS'e yükler, Stellar'a kaydeder, sağlayıcılara iletir, proof'u doğrular, escrow'u tetikler, talep edene sonucu teslim eder. Ham veriye hiçbir zaman dokunmaz.-- ipfs ye forntend app den hereks kendi yüklemesi lazımdı ama bazıalrı öyle bazıları böyle şuanlık veri iletimi şifreli
+## Operasyon Kuralları
 
-**OpenClaw** — Kullanıcının self-hosted AI gateway'i. Platform `POST /hooks/agent` ile mesaj gönderir (`channel: "whatsapp"`, `to: "+90..."`), kullanıcı mesajlaşma uygulamasından karar verir. OpenClaw Stellar'ı dinler, veriyi çeker, ZK proof üretir aslında zk-tls veri https doğrulama, platforma gönderir.
+- Facilitator ham veriyi loglamaz/saklamaz.
+- Callback'e sadece şifreli payload iletilir.
+- Ödeme ve state geçişleri mümkün olduğunca kontrat seviyesinde tutulur.
+- X402 kontrolü başarısızsa proof kabul edilmez.
 
-**Stellar** — İki rol: event bus (consent kararı on-chain) ve escrow (USDC kilidi). Soroban escrow contract Rust ile yazılıyor. 3-way release (sağlayıcı %70 / platform %20 / dispute %10) tek TX ile atomik. **Asıl ödeme Stellar ağında.** Testnet USDC SAC: `CBIELTK6YBZJU5UP2WWQEUCYKLPU6AUNZ2BQ4WWFEIE3USCIHMXQDAMA`
+## Bilinen Sınırlar
 
-**Reclaim Protocol** — ZK-TLS altyapısı. "Bu veri gerçekten X API'sinden geldi" kanıtını üretiyor. SDK: `@reclaimprotocol/js-sdk` + `@reclaimprotocol/zk-fetch`. X uygulaması için built-in provider yok — `zkFetch` ile custom yazılıyor.
+- Web build bazı CI/kapalı ağ ortamlarda Google Fonts erişimi nedeniyle kırılabilir.
+- ZK-TLS tarafında üretim attestor pipeline'ı hâlâ geliştirme/sertleştirme gerektirir.
+- Dispute/FHE hakemlik süreci Phase 2 kapsamındadır.
 
-**X402** — Coinbase'in HTTP ödeme protokolü. **Stellar'da çalışıyor** (Soroban authorization + OpenZeppelin Relayer x402 Plugin). Proof tesliminde spam engeli, veri tesliminde ödeme garantisi. Tüm X402 ödemeleri Stellar testnet üzerinden USDC ile.
+## Güncel Klasör Yapısı
 
+<<<<<<< HEAD
 ---
 
 ## Veri Türleri
@@ -289,87 +288,43 @@ MCP marketplace geri bildirim kontratı henüz tasarlanmadı — escrow pattern'
 
 ## Klasör Yapısı
 
-```
-dataEconomy/                      ← monorepo root (npm workspaces)
+```text
+dataEconomy/
 ├── apps/
-│   ├── web/                      Next.js 16 — tüm kullanıcı arayüzü (port 3000)
-│   │   └── src/
-│   │       ├── app/(auth)/       Login (Freighter wallet)
-│   │       ├── app/marketplace/  MCP marketplace (TODO)
-│   │       ├── app/skills/       Skill/MCP oluşturma (TODO)
-│   │       ├── app/tasks/        Görev listesi (TODO)
-│   │       ├── app/dashboard/    Dashboard (TODO)
-│   │       ├── hooks/            useFreighter vs
-│   │       └── components/ui/    Button vs
-│   └── api/                      Hono — tüm backend (port 3001)
+│   ├── web/                      Next.js 16 UI
+│   │   └── src/app/
+│   │       ├── (auth)/login
+│   │       ├── buy/
+│   │       ├── sell/
+│   │       ├── provider/
+│   │       ├── marketplace/ (+[id], /upload)
+│   │       ├── skills/create/
+│   │       ├── tasks/
+│   │       ├── proofs/
+│   │       ├── escrow/
+│   │       └── dashboard/
+│   └── api/
 │       └── src/routes/
-│           ├── auth.ts           GET /challenge, POST /verify
-│           ├── skills.ts         Skill oluşturma/listeleme + IPFS
-│           ├── proofs.ts         ZK proof submit + doğrulama (X402 spam)
-│           ├── consent.ts        OpenClaw bildirim + Stellar consent TX
-│           └── marketplace.ts    MCP listeleme/rating/ödeme (TODO)
+│           ├── auth.ts
+│           ├── skills.ts
+│           ├── notify.ts
+│           ├── proofs.ts
+│           ├── consent.ts
+│           ├── escrow.ts
+│           ├── provider.ts
+│           ├── marketplace.ts
+│           └── dashboard.ts
 ├── packages/
-│   ├── stellar/                  Horizon SSE + consent TX + USDC SAC
-│   ├── reclaim/                  zkFetch proof + verifyProof()
-│   ├── ipfs/                     Pinata upload/download + SkillJson type
-│   └── pseudonym/                HMAC-SHA256 pseudo_id
+│   ├── ipfs/
+│   ├── stellar/
+│   ├── reclaim/
+│   ├── pseudonym/
+│   └── storage/
 ├── contracts/
-│   ├── escrow/                   Soroban Rust — USDC kilitleme, 3-way release
-│   │   └── src/lib.rs            deposit/release/refund/dispute (5 test ✓)
-│   └── feedback/                 MCP kalite değerlendirme kontratı (TODO)
-├── .claude/agents/               Ajan tanımları (3 ajan)
-├── CLAUDE.md                     Bu dosya
-├── FLOW.md                       Detaylı akış
-├── AGENT.md                      OpenClaw entegrasyon kılavuzu (v1.0, 739 satır)
-└── .env.local                    Stellar keys, pseudonym secret (git'e girmez)
+│   ├── escrow/
+│   └── feedback/
+├── AGENT.md
+├── FLOW.md
+├── README.md
+└── CLAUDE.md
 ```
-
-## Önemli Sabitler
-
-```
-USDC_TESTNET_SAC  = CBIELTK6YBZJU5UP2WWQEUCYKLPU6AUNZ2BQ4WWFEIE3USCIHMXQDAMA
-HORIZON_TESTNET   = https://horizon-testnet.stellar.org
-SOROBAN_TESTNET   = https://soroban-testnet.stellar.org:443
-Escrow split      = %70 sağlayıcı / %20 platform / %10 dispute (atomik)
-Consent memo fmt  = CONSENT:{skillId8}:{pseudoId8}:ACCEPT|REJECT
-X402              = Stellar + USDC (OpenZeppelin Relayer x402 Plugin)
-X402_FACILITATOR  = https://channels.openzeppelin.com/x402/testnet
-Tüm ödemeler      = Stellar ağında (escrow + X402 + MCP creator)
-```
-
----
-
-## Çalışma Kuralları
-
-Ham veri hiçbir zaman loglanmaz. Sadece hash loglanır.
-Kullanıcı kimliği hiçbir yerde saklanmaz, sadece pseudo_id kullanılır.
-Stellar işlemleri önce testnet, sonra mainnet.
-Soroban contract değişikliği tam test suite olmadan deploy edilmez.
-.env git'e girmez, .env.example tutulur.
-Her public endpoint rate limit alır.
-MCP marketplace içeriği IPFS'te, metadata blockchain'de.
-
----
-
-## Güncelleme Geçmişi
-
-2026-02-28 — v0.1 — İlk taslak
-2026-02-28 — v0.2 — Büyük revizyon, kod örnekleri kaldırıldı
-2026-02-28 — v0.3 — OpenClaw keşfi, referans linkler, session rutini
-2026-02-28 — v0.4 — MVP kapsamı genişletildi
-2026-02-28 — v0.5 — X402 araştırması: Stellar desteği yok → Base+USDC; backend Hono
-2026-02-28 — v0.6 — Tüm araştırmalar tamamlandı
-2026-02-28 — v0.7 — Monorepo kuruldu, escrow contract, packages/* hazır
-2026-02-28 — v0.8 — Stellar wallet login (Freighter), auth route'ları
-2026-03-01 — v0.9 — Marketplace + MCP creator akışı, veri türleri, geri bildirim kontratı
-2026-03-01 — v1.0 — X402 Stellar'da VAR! Base+USDC referansları kaldırıldı.
-                     OpenZeppelin Relayer x402 Plugin eklendi.
-                     Native ZK Proofs (Protocol 25 X-Ray: BN254+Poseidon) keşfedildi.
-                     Tüm ödeme altyapısı Stellar ağında birleştirildi.
-2026-03-01 — v1.1 — Provider, proofs, escrow sayfaları oluşturuldu.
-                     Dashboard: OpenClaw bot + LLM proof bölümü eklendi.
-                     Stellar testnet hesabı (GBF32...LG6K) oluşturuldu.
-                     AGENT.md v1.0 yazıldı (739 satır OpenClaw kılavuzu).
-                     GitHub private repo push edildi.
-                     KRİTİK AŞAMA: ZK-TLS proof sistemi simüle.
-                     Çözüm: self-hosted attestor-core (APP_ID gerektirmez).

@@ -1,36 +1,54 @@
-This is a [Next.js](https://nextjs.org) project bootstrapped with [`create-next-app`](https://nextjs.org/docs/app/api-reference/cli/create-next-app).
+# dataEconomy (Stellar + IPFS + OpenClaw)
 
-## Getting Started
+Privacy-preserving data exchange marketplace.
 
-First, run the development server:
+Bu repo artık **frontend-first data plane** yaklaşımıyla çalışır:
+- Frontend doğrudan **Pinata HTTPS API** ile IPFS'e yazar.
+- Frontend doğrudan **Stellar/Soroban** işlemlerini Freighter ile imzalayıp gönderir.
+- Backend, yalnızca **facilitator awareness + policy + x402 doğrulama + teslim orkestrasyonu** yapar.
+
+## Güncel Mimari (Özet)
+
+1. Buyer/MCP Creator skill veya MCP metadata üretir.
+2. JSON payload frontend'de IPFS'e yüklenir (CID alınır).
+3. CID frontend'den Stellar'a indexlenir.
+4. Backend `notify` endpoint'i sadece zincir yazımını/tx hash'i kayıt altına alır.
+5. Seller/OpenClaw on-chain index + IPFS üzerinden işi okur.
+6. Proof submit akışı `x402` middleware ile ödeme doğrulamasından geçer.
+7. Escrow release sırasında kontrat içinde provider/platform/dispute + opsiyonel MCP creator split dağıtılır.
+8. Facilitator, buyer callback'ine yalnızca `encryptedPayload` iletir (plaintext tutmaz).
+
+## Öne Çıkan Son Değişiklikler
+
+- **X402 middleware** (`/api/proofs/submit`) aktif.
+- **MCP creator fee backend transferi kaldırıldı**; payout kontrat release fonksiyonuna taşındı.
+- **Delivery public key** (`deliveryPublicKey`) skill metadata'da taşınıyor.
+- Frontend skill/provider publish akışları backend'e bağımlı olmadan IPFS + chain yazıyor.
+- Tasks sayfasında API başarısızsa chain+IPFS fallback mevcut.
+
+## Monorepo Yapısı
+
+- `apps/web`: Next.js UI (buyer/seller/provider/marketplace/tasks/proofs/escrow/dashboard)
+- `apps/api`: Hono facilitator API (auth, skills, notify, proofs, consent, escrow, provider, marketplace)
+- `packages/*`: stellar, ipfs, reclaim, pseudonym, storage adaptörleri
+- `contracts/escrow`: Soroban escrow + MCP fee split release fonksiyonları
+- `AGENT.md`: OpenClaw bot/facilitator üretim runbook
+- `FLOW.md`: Uçtan uca operasyon akışı
+- `CLAUDE.md`: Proje hafızası ve uygulama kararları
+
+## Hızlı Başlangıç
 
 ```bash
+npm install
+npm run build:packages
+npm run build:api
 npm run dev
-# or
-yarn dev
-# or
-pnpm dev
-# or
-bun dev
 ```
 
-Open [http://localhost:3000](http://localhost:3000) with your browser to see the result.
+Web: `http://localhost:3000`
+API: `http://localhost:3001`
 
-You can start editing the page by modifying `app/page.tsx`. The page auto-updates as you edit the file.
+## Notlar
 
-This project uses [`next/font`](https://nextjs.org/docs/app/building-your-application/optimizing/fonts) to automatically optimize and load [Geist](https://vercel.com/font), a new font family for Vercel.
-
-## Learn More
-
-To learn more about Next.js, take a look at the following resources:
-
-- [Next.js Documentation](https://nextjs.org/docs) - learn about Next.js features and API.
-- [Learn Next.js](https://nextjs.org/learn) - an interactive Next.js tutorial.
-
-You can check out [the Next.js GitHub repository](https://github.com/vercel/next.js) - your feedback and contributions are welcome!
-
-## Deploy on Vercel
-
-The easiest way to deploy your Next.js app is to use the [Vercel Platform](https://vercel.com/new?utm_medium=default-template&filter=next.js&utm_source=create-next-app&utm_campaign=create-next-app-readme) from the creators of Next.js.
-
-Check out our [Next.js deployment documentation](https://nextjs.org/docs/app/building-your-application/deploying) for more details.
+- `npm run build:web` bazı ortamlarda Google Fonts erişimi nedeniyle başarısız olabilir (network kısıtı).
+- Kontrat değişikliklerinde `contracts/escrow` altında `cargo test` çalıştırın.

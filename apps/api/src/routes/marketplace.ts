@@ -1,4 +1,4 @@
-import { sendUsdcPayment, writeIndexEntry, readAccountData } from '@dataeconomy/stellar'
+import { writeIndexEntry, readAccountData } from '@dataeconomy/stellar'
 import { uploadJson } from '@dataeconomy/ipfs'
 import { Keypair } from '@stellar/stellar-sdk'
 import { Hono } from "hono";
@@ -203,38 +203,10 @@ export function createMarketplaceRouter(storage: StorageService) {
     const mcp = await storage.getMcp(id);
     if (!mcp) return c.json({ error: "MCP standard not found" }, 404);
 
-    const fee = mcp.usageFee ?? 0;
-    let paymentTx: string | null = null;
-    let paidAmount = 0;
-
-    // Pay creator via Stellar USDC
-    if (mcp.creatorAddress && fee > 0) {
-      const secret = process.env.STELLAR_PLATFORM_SECRET;
-      if (!secret && isProd) {
-        return c.json({ error: "STELLAR_PLATFORM_SECRET yapılandırılmamış" }, 500);
-      }
-      if (secret) {
-        try {
-          const keypair = Keypair.fromSecret(secret);
-          const result = await sendUsdcPayment(
-            keypair,
-            mcp.creatorAddress,
-            fee,
-            `MCP:${id.slice(0, 16)}`
-          );
-          paymentTx = (result as any).hash ?? null;
-          paidAmount = fee;
-          console.log(`[marketplace] Creator paid: ${fee} USDC → ${mcp.creatorAddress.slice(0, 8)}... tx:${paymentTx}`);
-        } catch (err) {
-          if (isProd) {
-            return c.json({ error: "Creator odemesi basarisiz" }, 502);
-          }
-          console.warn("[marketplace] Creator payment failed (non-critical):", err);
-        }
-      }
-    }
-
-    // Update usage count + cumulative volume
+    // Creator payout is executed at escrow release by contract split.
+    // /use only tracks usage and on-chain volume metrics.
+    const paidAmount = mcp.usageFee ?? 0
+    const paymentTx: string | null = null
     const newVolume = (mcp.volume ?? 0) + paidAmount;
     const updated = await storage.updateMcp(id, {
       usageCount: mcp.usageCount + 1,

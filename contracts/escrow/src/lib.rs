@@ -240,6 +240,58 @@ impl EscrowContract {
         env.storage().persistent().set(&key, &data);
     }
 
+    // Optional MCP creator split (deducted from platform share).
+    // mcp_fee_bps is in basis points of total escrow amount (10000 = 100%).
+    // Guarded so that platform share never goes negative.
+    pub fn release_with_mcp_fee(
+        env: Env,
+        caller: Address,
+        escrow_id: String,
+        mcp_creator: Address,
+        mcp_fee_bps: u32,
+    ) {
+        caller.require_auth();
+
+        let key = DataKey::Escrow(escrow_id.clone());
+        let mut data: EscrowData = env
+            .storage()
+            .persistent()
+            .get(&key)
+            .unwrap_or_else(|| panic!("escrow not found"));
+
+        if data.released {
+            panic!("already released");
+        }
+        if caller != data.platform {
+            panic!("unauthorized: only platform may release");
+        }
+        if mcp_fee_bps > 2000 {
+            panic!("mcp fee too high");
+        }
+
+        let token_client = token::Client::new(&env, &data.token);
+        let recipient_amount = data.amount * 70 / 100;
+        let mut platform_amount = data.amount * 20 / 100;
+        let dispute_amount = data.amount - recipient_amount - platform_amount;
+        let mcp_amount = data.amount * (mcp_fee_bps as i128) / 10000;
+
+        if mcp_amount > platform_amount {
+            panic!("mcp fee exceeds platform share");
+        }
+
+        platform_amount -= mcp_amount;
+
+        token_client.transfer(&env.current_contract_address(), &data.recipient, &recipient_amount);
+        token_client.transfer(&env.current_contract_address(), &data.platform, &platform_amount);
+        if mcp_amount > 0 {
+            token_client.transfer(&env.current_contract_address(), &mcp_creator, &mcp_amount);
+        }
+        token_client.transfer(&env.current_contract_address(), &data.dispute_wallet, &dispute_amount);
+
+        data.released = true;
+        env.storage().persistent().set(&key, &data);
+    }
+
     pub fn refund(env: Env, caller: Address, escrow_id: String) {
         caller.require_auth();
 

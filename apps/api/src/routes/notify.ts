@@ -140,6 +140,7 @@ export function createNotifyRouter(storage: StorageService) {
       totalBudget: z.number(),
       targetCount: z.number(),
       callbackUrl: z.string().optional(),
+      deliveryPublicKey: z.string().optional(),
       mcpId: z.string().optional(),
     }).passthrough(),
   })
@@ -163,6 +164,7 @@ export function createNotifyRouter(storage: StorageService) {
       totalBudget: body.data.totalBudget,
       targetCount: body.data.targetCount,
       callbackUrl: body.data.callbackUrl,
+      deliveryPublicKey: body.data.deliveryPublicKey,
       mcpId: body.data.mcpId,
       expiresAt: new Date(Date.now() + body.data.durationDays * 24 * 60 * 60 * 1000).toISOString(),
       createdAt: new Date().toISOString(),

@@ -265,3 +265,48 @@ fn test_stake_query() {
     // depositor was staked 200_000_000 in setup
     assert_eq!(client.get_stake(&depositor), 200_000_000);
 }
+
+// ---------------------------------------------------------------------------
+// Test 7: release_with_mcp_fee distributes creator share from platform portion
+// ---------------------------------------------------------------------------
+
+#[test]
+fn test_release_with_mcp_fee() {
+    let env = Env::default();
+    env.mock_all_auths();
+
+    let (contract_addr, token_addr, token_client, depositor, recipient, platform, dispute) =
+        setup_escrow(&env);
+
+    let client = EscrowContractClient::new(&env, &contract_addr);
+    let mcp_creator = Address::generate(&env);
+
+    let amount: i128 = 1_000;
+    let eid = escrow_id(&env, "skill6:user6");
+    let skill = escrow_id(&env, "skill6");
+
+    client.deposit(
+        &depositor,
+        &token_addr,
+        &amount,
+        &recipient,
+        &platform,
+        &dispute,
+        &skill,
+        &eid,
+    );
+
+    // 500 bps => 5% of total, deducted from platform 20%
+    client.release_with_mcp_fee(&platform, &eid, &mcp_creator, &500u32);
+
+    let expected_recipient = amount * 70 / 100;
+    let expected_dispute = amount * 10 / 100;
+    let expected_mcp = amount * 500 / 10000;
+    let expected_platform = (amount * 20 / 100) - expected_mcp;
+
+    assert_eq!(token_client.balance(&recipient), expected_recipient);
+    assert_eq!(token_client.balance(&platform), expected_platform);
+    assert_eq!(token_client.balance(&mcp_creator), expected_mcp);
+    assert_eq!(token_client.balance(&dispute), expected_dispute);
+    assert_eq!(token_client.balance(&contract_addr), 0);
+}

@@ -147,6 +147,7 @@ function BuyDataInner() {
   const [targetCount, setTargetCount] = useState(100);
   const [totalBudget, setTotalBudget] = useState(150);
   const [callbackUrl, setCallbackUrl] = useState("");
+  const [deliveryPublicKey, setDeliveryPublicKey] = useState("");
 
   /* result */
   const [result, setResult] = useState<{
@@ -302,6 +303,7 @@ function BuyDataInner() {
         totalBudget,
         targetCount,
         callbackUrl: callbackUrl || undefined,
+        deliveryPublicKey: deliveryPublicKey || undefined,
         mcpId: selectedMcpId || undefined,
         conditions: conditions || undefined,
         stakeTxHash,
@@ -1011,6 +1013,20 @@ function BuyDataInner() {
                 className="flow-input"
                 placeholder="https://your-api.example/webhook/data-ready"
               />
+            </div>
+
+            <div>
+              <label className="flow-label">Delivery Public Key (X25519/age)</label>
+              <input
+                type="text"
+                value={deliveryPublicKey}
+                onChange={(e) => setDeliveryPublicKey(e.target.value)}
+                className="flow-input font-mono"
+                placeholder="age1... veya base64 public key"
+              />
+              <p className="mt-1 text-xs text-slate-500">
+                OpenClaw payloadı bu public key ile şifreler. Buyer callback private key ile çözer.
+              </p>
             </div>
           </div>
 
