@@ -5,6 +5,8 @@ import { useSession } from "next-auth/react";
 import { useRouter, useSearchParams } from "next/navigation";
 import { useEffect, useState } from "react";
 import { apiFetch } from "@/lib/api";
+import { uploadJsonToIpfs } from "@/lib/ipfs";
+import { buildIndexKey, buildManageDataTx, signAndSubmitTx } from "@/lib/stellar";
 import Button from "@/components/ui/Button";
 
 const DATA_SOURCES = [
@@ -21,7 +23,7 @@ export default function CreateSkillPage() {
 }
 
 function CreateSkillInner() {
-  const { status } = useSession();
+  const { data: session, status } = useSession();
   const router = useRouter();
   const searchParams = useSearchParams();
   const mcpId = searchParams.get("mcp");
@@ -60,15 +62,50 @@ function CreateSkillInner() {
     };
 
     try {
-      const res = await apiFetch<{
-        skillId: string;
-        ipfsHash: string;
-        escrowAddress: string;
-      }>("/api/skills", {
-        method: "POST",
-        body: JSON.stringify(body),
+      const stellarAddress = (session?.user as { stellarAddress?: string } | undefined)?.stellarAddress;
+      if (!stellarAddress) {
+        throw new Error("Wallet not connected");
+      }
+
+      const skillId = crypto.randomUUID();
+      const skillPayload = {
+        id: skillId,
+        ...body,
+        status: "active",
+        createdAt: new Date().toISOString(),
+        expiresAt: new Date(Date.now() + body.durationDays * 24 * 60 * 60 * 1000).toISOString(),
+      };
+
+      // 1) Frontend -> Pinata HTTPS API
+      const ipfsHash = await uploadJsonToIpfs(skillPayload, {
+        name: `skill-${skillId.slice(0, 8)}.json`,
+        keyvalues: { type: "skill", skillId: skillId.slice(0, 32) },
       });
-      setResult(res);
+
+      // 2) Frontend -> Stellar (Freighter signed manage_data)
+      const indexKey = buildIndexKey("skill", skillId);
+      const xdr = await buildManageDataTx(stellarAddress, indexKey, ipfsHash);
+      const txHash = await signAndSubmitTx(xdr);
+
+      // 3) Backend notify only (facilitator awareness)
+      await apiFetch("/api/notify/skill", {
+        method: "POST",
+        body: JSON.stringify({
+          skillId,
+          ipfsHash,
+          txHash,
+          stellarAddress,
+          data: body,
+        }),
+      }).catch((notifyErr) => {
+        console.warn("[skills/create] backend notify failed", notifyErr);
+      });
+
+      setResult({
+        skillId,
+        ipfsHash,
+        escrowAddress: process.env.NEXT_PUBLIC_PLATFORM_ESCROW_ADDRESS || "DEPLOY_ESCROW_FIRST",
+      });
     } catch (err) {
       setError(err instanceof Error ? err.message : "Something went wrong");
     } finally {

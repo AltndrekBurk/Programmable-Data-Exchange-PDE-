@@ -2,7 +2,8 @@
 
 import { useEffect, useState } from "react";
 import Link from "next/link";
-import { apiFetch } from "@/lib/api";
+import { fetchFromIpfs } from "@/lib/ipfs";
+import { listEntityEntriesFromAccount } from "@/lib/stellar";
 
 interface McpStandard {
   id: string;
@@ -33,10 +34,46 @@ export default function MarketplacePage() {
   const [witnessFilter, setWitnessFilter] = useState("all");
 
   useEffect(() => {
-    apiFetch<{ standards: McpStandard[]; totalVolume?: number }>("/api/marketplace")
-      .then((data) => {
-        setStandards(data.standards || []);
-        setChainTotalVolume(typeof data.totalVolume === "number" ? data.totalVolume : null);
+    const platformAddress = process.env.NEXT_PUBLIC_STELLAR_PLATFORM_PUBLIC;
+    if (!platformAddress) {
+      setStandards([]);
+      setChainTotalVolume(null);
+      setLoading(false);
+      return;
+    }
+
+    listEntityEntriesFromAccount(platformAddress, "mcp")
+      .then(async (entries) => {
+        const onChain = await Promise.all(
+          entries.map(async (entry) => {
+            try {
+              const item = await fetchFromIpfs<Partial<McpStandard> & { id?: string }>(entry.ipfsHash);
+              return {
+                id: item.id || entry.id,
+                title: item.title || "Untitled MCP",
+                description: item.description || "",
+                dataSource: item.dataSource || "unknown",
+                metrics: item.metrics || [],
+                creator: item.creator || "unknown",
+                usageCount: item.usageCount || 0,
+                volume: item.volume || 0,
+                proofType: item.proofType || "zk-tls",
+                freshnessSlaHours: item.freshnessSlaHours || 24,
+                minWitnessCount: item.minWitnessCount || 1,
+                deliveryFormat: item.deliveryFormat || "json",
+                schemaVersion: item.schemaVersion || "1.0.0",
+                rating: item.rating || 0,
+                ipfsHash: entry.ipfsHash,
+              } as McpStandard;
+            } catch {
+              return null;
+            }
+          })
+        );
+
+        const standards = onChain.filter((s): s is McpStandard => s !== null);
+        setStandards(standards);
+        setChainTotalVolume(standards.reduce((sum, s) => sum + (s.volume || 0), 0));
       })
       .catch(() => {
         setStandards([]);
