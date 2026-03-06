@@ -75,13 +75,40 @@ export interface StoredMcpStandard {
   feedbackContractId?: string
 }
 
+export type VerificationMethod = 'api-zktls' | 'device-tee' | 'fhe-range' | 'zk-selective'
+export type DataTimingMode = 'realtime' | 'historical' | 'periodic'
+
 export interface ProviderPolicy {
+  /* ── Verification ── */
+  verificationMethod: VerificationMethod
+
+  /* ── Data Sources (free-form, no restriction) ── */
+  dataSources: string[]
+
+  /* ── Data Timing ── */
+  dataTimingMode: DataTimingMode
+  /** ISO date – only when dataTimingMode === 'historical' */
+  historicalStartDate?: string
+  /** ISO date – only when dataTimingMode === 'historical' */
+  historicalEndDate?: string
+  /** Cron-like interval description – only when dataTimingMode === 'periodic' */
+  periodicInterval?: string
+  /** e.g. "every 6 hours", "daily", "weekly" */
+  periodicFrequencyLabel?: string
+
+  /* ── Constraints ── */
   minRewardPerUserUsdc: number
   maxProgramDurationDays: number
   maxProofAgeHours: number
   minWitnessCount: number
   requireHttpsBuyerCallback: boolean
   maxActivePrograms: number
+
+  /* ── Metadata ── */
+  /** IPFS CID of the full policy document (set after upload) */
+  policyCid?: string
+  /** Free-text description of what data is offered and conditions */
+  policyDescription?: string
 }
 
 export interface StoredProof {

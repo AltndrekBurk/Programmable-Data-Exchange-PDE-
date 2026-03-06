@@ -21,6 +21,8 @@ import { createProofsRouter } from './routes/proofs.js'
 import { createMarketplaceRouter } from './routes/marketplace.js'
 import { createProviderRouter } from './routes/provider.js'
 import { createEscrowRouter } from './routes/escrow.js'
+import { createDashboardRouter } from './routes/dashboard.js'
+import { createNotifyRouter } from './routes/notify.js'
 import { createStorageService, createEscrowAdapter } from '@dataeconomy/storage'
 const isProd = process.env.NODE_ENV === 'production'
 const corsOrigin = process.env.CORS_ORIGIN ?? '*'
@@ -57,6 +59,8 @@ app.route('/api/proofs', createProofsRouter(storage, escrowAdapter))
 app.route('/api/marketplace', createMarketplaceRouter(storage))
 app.route('/api/provider', createProviderRouter(storage))
 app.route('/api/escrow', createEscrowRouter(escrowAdapter))
+app.route('/api/dashboard', createDashboardRouter(storage))
+app.route('/api/notify', createNotifyRouter(storage))
 
 // IPFS proxy — frontend fetches IPFS data through backend
 app.get('/api/ipfs/:cid', async (c) => {

@@ -1,6 +1,6 @@
  "use client";
 import { useState, useCallback } from "react";
-import StellarSdk from "@stellar/stellar-sdk";
+import * as StellarSdk from "@stellar/stellar-sdk";
 
 export type FreighterState = {
   isInstalled: boolean;
@@ -200,5 +200,30 @@ export function useFreighter() {
     []
   );
 
-  return { ...state, connect, signChallenge, signAndSubmitConsentTx };
+  /**
+   * Build a manage_data TX, sign with Freighter, submit to Horizon.
+   * Used for writing IPFS CID index entries on-chain from the client.
+   */
+  const signAndSubmitManageDataTx = useCallback(
+    async (
+      publicKey: string,
+      key: string,
+      value: string
+    ): Promise<{ hash: string } | null> => {
+      try {
+        const { buildManageDataTx, signAndSubmitTx } = await import("@/lib/stellar");
+        const xdr = await buildManageDataTx(publicKey, key, value);
+        const hash = await signAndSubmitTx(xdr);
+        return { hash };
+      } catch (err) {
+        const msg =
+          err instanceof Error ? err.message : "manage_data TX gonderilirken hata olustu";
+        setState((s) => ({ ...s, error: msg }));
+        return null;
+      }
+    },
+    []
+  );
+
+  return { ...state, connect, signChallenge, signAndSubmitConsentTx, signAndSubmitManageDataTx };
 }

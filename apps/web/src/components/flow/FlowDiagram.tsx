@@ -121,8 +121,8 @@ const NODES: NodeDef[] = [
   {
     id: 'datasource',
     label: ['Data Source', '(API / Device)'],
-    cx: 350,
-    cy: 680,
+    cx: 440,
+    cy: 710,
     w: 170,
     h: 50,
     color: '#9ca3af',
@@ -139,6 +139,17 @@ const NODES: NodeDef[] = [
     color: '#fbbf24',
     bgColor: 'rgba(69,26,3,0.95)',
     desc: 'Buyer rates the MCP and data quality; scores are recorded on-chain for marketplace reputation.',
+  },
+  {
+    id: 'openclaw',
+    label: ['OpenClaw Bot'],
+    cx: 170,
+    cy: 650,
+    w: 180,
+    h: 50,
+    color: '#22c55e',
+    bgColor: 'rgba(4,47,33,0.95)',
+    desc: 'Self-hosted agent that listens to Stellar events, talks to the provider and pulls data from the source under the provider policy.',
   },
 ];
 
@@ -213,9 +224,9 @@ const EDGES: EdgeDef[] = [
     id: 'e_plat_data',
     from: 'platform',
     to: 'datasource',
-    label: 'zk-TLS fetch',
-    cp1: [550, 680],
-    cp2: [450, 680],
+    label: 'Attestor / zk-TLS config',
+    cp1: [600, 660],
+    cp2: [520, 690],
     color: '#ffffff',
   },
   {
@@ -257,6 +268,45 @@ const EDGES: EdgeDef[] = [
     cp1: [500, 180],
     cp2: [500, 280],
     color: '#fbbf24',
+  },
+  // Escrow -> Marketplace (creator rewards / MCP volume arc)
+  {
+    id: 'e_esc_mp',
+    from: 'escrow',
+    to: 'marketplace',
+    label: 'MCP volume · creator rewards',
+    cp1: [560, 340],
+    cp2: [720, 220],
+    color: '#fbbf24',
+  },
+  // Provider-side agent path: Seller -> OpenClaw -> Data Source
+  {
+    id: 'e_sel_oc',
+    from: 'seller',
+    to: 'openclaw',
+    label: 'Bot channel (WhatsApp/API)',
+    cp1: [170, 500],
+    cp2: [170, 610],
+    color: '#22c55e',
+  },
+  {
+    id: 'e_oc_data',
+    from: 'openclaw',
+    to: 'datasource',
+    label: 'TLS session · zkFetch',
+    cp1: [250, 690],
+    cp2: [340, 710],
+    color: '#22c55e',
+  },
+  // Escrow -> OpenClaw (Stellar events / task stream)
+  {
+    id: 'e_esc_oc',
+    from: 'escrow',
+    to: 'openclaw',
+    label: 'Stellar events (tasks)',
+    cp1: [430, 480],
+    cp2: [260, 620],
+    color: '#22c55e',
   },
 ];
 
@@ -517,7 +567,7 @@ export function FlowDiagram() {
         }
       });
 
-      drawFrame(ctx, ts, { ...state, activeNode });
+      drawFrame(ctx!, ts, { ...state, activeNode });
       state.rafId = requestAnimationFrame(tick);
     }
 

@@ -1,4 +1,5 @@
 import { sendUsdcPayment, writeIndexEntry, readAccountData } from '@dataeconomy/stellar'
+import { uploadJson } from '@dataeconomy/ipfs'
 import { Keypair } from '@stellar/stellar-sdk'
 import { Hono } from "hono";
 import { zValidator } from "@hono/zod-validator";
@@ -68,47 +69,112 @@ export function createMarketplaceRouter(storage: StorageService) {
   const createMcpSchema = z.object({
     title: z.string().min(3).max(200),
     description: z.string().min(10).max(2000),
+    targetApp: z.string().min(1),
     dataSource: z.string().min(1),
+    useCase: z.string().min(10).max(2000),
+    targetSector: z.string().optional(),
     metrics: z.array(z.string()).min(1),
     apiEndpoint: z.string().url(),
     authType: z.enum(["oauth2", "api_key", "bearer", "none"]),
+    oauthScopes: z.string().optional(),
     responseFormat: z.string().optional().default(""),
+    rateLimitInfo: z.string().optional(),
+    exampleResponse: z.string().optional(),
+    errorCodes: z.string().optional(),
+    verificationMethod: z.enum(["api-zktls", "device-tee", "fhe-range", "zk-selective"]).default("api-zktls"),
+    dataTimingMode: z.enum(["realtime", "historical", "periodic"]).default("realtime"),
+    updateFrequency: z.string().optional(),
     creatorAddress: z.string().startsWith("G").length(56).optional(),
     usageFee: z.number().min(0).max(10).optional().default(0.05),
-    proofType: z.enum(["zk-tls", "attested-runtime", "hybrid"]).optional().default("zk-tls"),
     freshnessSlaHours: z.number().int().min(1).max(168).optional().default(24),
     minWitnessCount: z.number().int().min(1).max(10).optional().default(1),
     deliveryFormat: z.enum(["json", "cbor", "protobuf"]).optional().default("json"),
-    schemaVersion: z.string().min(1).max(20).optional().default("1.0.0"),
-    dataRetentionDays: z.number().int().min(1).max(365).optional().default(30),
     requiresConsentTx: z.boolean().optional().default(true),
-    advancedConfig: z.string().optional().default(""),
+    skillDocContent: z.string().optional(),
+    skillDocFilename: z.string().optional(),
   });
 
   // POST /api/marketplace — Upload new MCP standard
+  // DEPRECATED: Client now uploads to IPFS + Stellar directly, then POSTs to /api/notify/mcp
+  // Kept for backward compatibility
   router.post("/", zValidator("json", createMcpSchema), async (c) => {
     const body = c.req.valid("json");
     const id = uuidv4();
     const secret = process.env.PSEUDONYM_SECRET;
     if (!secret) return c.json({ error: "PSEUDONYM_SECRET yapılandırılmamış" }, 500);
-    const creator = generatePseudonym(secret, "marketplace-creator").pseudonym;
+
+    const creatorPseudo = body.creatorAddress
+      ? generatePseudonym(secret, body.creatorAddress).pseudonym
+      : generatePseudonym(secret, "marketplace-creator").pseudonym;
+
+    // Upload skill document to IPFS if provided
+    let skillDocCid: string | undefined;
+    if (body.skillDocContent) {
+      try {
+        skillDocCid = await uploadJson(
+          {
+            type: "skill-document",
+            mcpId: id,
+            filename: body.skillDocFilename || "skill.md",
+            content: body.skillDocContent,
+            uploadedAt: new Date().toISOString(),
+          },
+          {
+            name: `skill-doc-${id.slice(0, 8)}.json`,
+            keyvalues: { type: "skill-doc", mcpId: id.slice(0, 32) },
+          }
+        );
+        console.log(`[marketplace] Skill doc uploaded: ${skillDocCid} for MCP ${id.slice(0, 8)}`);
+      } catch (err) {
+        console.warn("[marketplace] Skill doc IPFS upload failed:", err);
+      }
+    }
+
+    // Map verification method to legacy proofType for backwards compatibility
+    const proofTypeMap: Record<string, string> = {
+      "api-zktls": "zk-tls",
+      "device-tee": "attested-runtime",
+      "fhe-range": "hybrid",
+      "zk-selective": "hybrid",
+    };
+
+    // Build advanced config with all the new detailed fields
+    const advancedConfig = JSON.stringify({
+      targetApp: body.targetApp,
+      useCase: body.useCase,
+      targetSector: body.targetSector,
+      verificationMethod: body.verificationMethod,
+      dataTimingMode: body.dataTimingMode,
+      updateFrequency: body.updateFrequency,
+      oauthScopes: body.oauthScopes,
+      rateLimitInfo: body.rateLimitInfo,
+      exampleResponse: body.exampleResponse,
+      errorCodes: body.errorCodes,
+      skillDocCid,
+    });
 
     const mcp = {
       id,
-      ...body,
-      creator,
+      title: body.title,
+      description: body.description,
+      dataSource: body.dataSource,
+      metrics: body.metrics,
+      apiEndpoint: body.apiEndpoint,
+      authType: body.authType,
+      responseFormat: body.responseFormat ?? "",
+      creator: creatorPseudo,
       creatorAddress: body.creatorAddress,
       usageFee: body.usageFee ?? 0.05,
       usageCount: 0,
       volume: 0,
-      proofType: body.proofType ?? "zk-tls",
+      proofType: (proofTypeMap[body.verificationMethod] ?? "zk-tls") as "zk-tls" | "attested-runtime" | "hybrid",
       freshnessSlaHours: body.freshnessSlaHours ?? 24,
       minWitnessCount: body.minWitnessCount ?? 1,
-      deliveryFormat: body.deliveryFormat ?? "json",
-      schemaVersion: body.schemaVersion ?? "1.0.0",
-      dataRetentionDays: body.dataRetentionDays ?? 30,
+      deliveryFormat: (body.deliveryFormat ?? "json") as "json" | "cbor" | "protobuf",
+      schemaVersion: "1.0.0",
+      dataRetentionDays: 30,
       requiresConsentTx: body.requiresConsentTx ?? true,
-      advancedConfig: body.advancedConfig ?? "",
+      advancedConfig,
       rating: 0,
       ratingCount: 0,
       ipfsHash: "",
@@ -122,6 +188,7 @@ export function createMarketplaceRouter(storage: StorageService) {
       {
         id,
         ipfsHash: result.ipfsHash,
+        skillDocCid: skillDocCid || null,
         stellarTx: result.stellarTx || null,
         status: "published",
         message: "MCP standard published to marketplace",

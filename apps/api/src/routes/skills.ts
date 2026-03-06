@@ -14,28 +14,34 @@ export function createSkillsRouter(storage: StorageService) {
     minWitnessCount: z.number().int().min(1).max(10).optional(),
     replayProtectionWindowHours: z.number().int().min(1).max(168).optional(),
     requireHttpsCallback: z.boolean().optional(),
-    deliveryContentType: z.enum([
-      'application/json',
-      'application/cbor',
-      'application/octet-stream',
-    ]).optional(),
+    deliveryContentType: z.string().optional(),
   }).optional()
 
   const createSkillSchema = z.object({
     title: z.string().min(3).max(100),
-    description: z.string().max(500),
-    dataSource: z.string(),
+    description: z.string().max(2000),
+    dataSource: z.string().min(1),
     metrics: z.array(z.string()),
+    verificationMethod: z.enum(['api-zktls', 'device-tee', 'fhe-range', 'zk-selective']).default('api-zktls'),
+    dataTimingMode: z.enum(['realtime', 'historical', 'periodic']).default('realtime'),
+    historicalStartDate: z.string().optional(),
+    historicalEndDate: z.string().optional(),
+    periodicFrequency: z.string().optional(),
+    periodicCustom: z.string().optional(),
     durationDays: z.number().int().min(1).max(365),
     rewardPerUser: z.number().positive(),
     totalBudget: z.number().positive(),
     targetCount: z.number().int().positive(),
     callbackUrl: z.string().url().optional(),
-    mcpId: z.string().uuid().optional(),
+    mcpId: z.string().optional(),
+    conditions: z.string().optional(),
+    stakeTxHash: z.string().optional(),
     policy: skillPolicySchema,
   })
 
   // POST /api/skills
+  // DEPRECATED: Client now uploads to IPFS + Stellar directly, then POSTs to /api/notify/skill
+  // Kept for backward compatibility
   router.post('/', zValidator('json', createSkillSchema), async (c) => {
     const body = c.req.valid('json')
     const skillId = uuidv4()
@@ -52,10 +58,27 @@ export function createSkillsRouter(storage: StorageService) {
       return c.json({ error: 'PLATFORM_ESCROW_ADDRESS yapılandırılmamış' }, 500)
     }
 
+    // Build the full program description with embedded policy metadata
+    const timingMeta = body.dataTimingMode === 'historical'
+      ? `Historical: ${body.historicalStartDate || '?'} → ${body.historicalEndDate || '?'}`
+      : body.dataTimingMode === 'periodic'
+        ? `Periodic: ${body.periodicFrequency || 'daily'}${body.periodicCustom ? ` (${body.periodicCustom})` : ''}`
+        : 'Real-time'
+
+    const policySuffix = JSON.stringify({
+      verificationMethod: body.verificationMethod,
+      dataTimingMode: body.dataTimingMode,
+      timing: timingMeta,
+      proofType: body.verificationMethod,
+      ...(body.policy || {}),
+      ...(body.conditions ? { extraConditions: body.conditions } : {}),
+      ...(body.stakeTxHash ? { stakeTxHash: body.stakeTxHash } : {}),
+    })
+
     const skill = {
       id: skillId,
       title: body.title,
-      description: body.description,
+      description: `${body.description}\n\n[program-policy] ${policySuffix}`,
       dataSource: body.dataSource,
       metrics: body.metrics,
       durationDays: body.durationDays,
@@ -69,7 +92,7 @@ export function createSkillsRouter(storage: StorageService) {
         minWitnessCount: body.policy?.minWitnessCount ?? 1,
         replayProtectionWindowHours: body.policy?.replayProtectionWindowHours ?? 24,
         requireHttpsCallback: body.policy?.requireHttpsCallback ?? true,
-        deliveryContentType: body.policy?.deliveryContentType ?? 'application/octet-stream',
+        deliveryContentType: (body.policy?.deliveryContentType ?? 'application/json') as 'application/json' | 'application/cbor' | 'application/octet-stream',
       },
       expiresAt: new Date(Date.now() + body.durationDays * 24 * 60 * 60 * 1000).toISOString(),
       createdAt: new Date().toISOString(),

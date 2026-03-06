@@ -3,20 +3,56 @@ import { useSession } from "next-auth/react";
 import { useRouter } from "next/navigation";
 import { useEffect, useState } from "react";
 import { apiFetch } from "@/lib/api";
+import { uploadJsonToIpfs } from "@/lib/ipfs";
+import { buildIndexKey, buildManageDataTx, signAndSubmitTx } from "@/lib/stellar";
 import Button from "@/components/ui/Button";
 import { useFreighter } from "@/hooks/useFreighter";
 
-const API_SOURCES = [
-  { id: "fitbit", label: "Fitbit" },
-  { id: "strava", label: "Strava" },
-  { id: "spotify", label: "Spotify" },
-  { id: "github", label: "GitHub" },
-  { id: "google_fit", label: "Google Fit" },
-  { id: "plaid", label: "Plaid (Bank)" },
-  { id: "garmin", label: "Garmin" },
-  { id: "whoop", label: "WHOOP" },
+/* ─── Verification method options ─── */
+type VerificationMethod = "api-zktls" | "device-tee" | "fhe-range" | "zk-selective";
+
+const VERIFICATION_METHODS: {
+  id: VerificationMethod;
+  label: string;
+  desc: string;
+  enabled: boolean;
+}[] = [
+  {
+    id: "api-zktls",
+    label: "API (zkTLS)",
+    desc: "Verify data from any web API using zero-knowledge TLS proofs. Works with any REST/GraphQL endpoint.",
+    enabled: true,
+  },
+  {
+    id: "device-tee",
+    label: "Device (TEE)",
+    desc: "Verify data directly from device sensors using Trusted Execution Environment attestation.",
+    enabled: false,
+  },
+  {
+    id: "fhe-range",
+    label: "FHE (Range Query)",
+    desc: "Answer range queries (e.g. age 25-35?) without revealing exact values using Fully Homomorphic Encryption.",
+    enabled: false,
+  },
+  {
+    id: "zk-selective",
+    label: "ZK Selective Disclosure",
+    desc: "Reveal only specific fields from your data while keeping the rest private with ZK proofs.",
+    enabled: false,
+  },
 ];
 
+/* ─── Data timing options ─── */
+type DataTimingMode = "realtime" | "historical" | "periodic";
+
+const TIMING_OPTIONS: { id: DataTimingMode; label: string; desc: string }[] = [
+  { id: "realtime", label: "Real-time", desc: "Fresh data fetched at the moment of request" },
+  { id: "historical", label: "Historical", desc: "Data from a specific date range in the past" },
+  { id: "periodic", label: "Periodic", desc: "Recurring data collection at regular intervals" },
+];
+
+/* ─── Types ─── */
 interface Task {
   id: string;
   skillId: string;
@@ -33,6 +69,24 @@ interface Task {
   status: "pending" | "accepted" | "rejected" | "completed";
 }
 
+interface ProviderPolicy {
+  verificationMethod: VerificationMethod;
+  dataSources: string[];
+  dataTimingMode: DataTimingMode;
+  historicalStartDate?: string;
+  historicalEndDate?: string;
+  periodicInterval?: string;
+  periodicFrequencyLabel?: string;
+  minRewardPerUserUsdc: number;
+  maxProgramDurationDays: number;
+  maxProofAgeHours: number;
+  minWitnessCount: number;
+  requireHttpsBuyerCallback: boolean;
+  maxActivePrograms: number;
+  policyCid?: string;
+  policyDescription?: string;
+}
+
 interface ProviderInfo {
   registered: boolean;
   dataSources?: string[];
@@ -40,30 +94,25 @@ interface ProviderInfo {
   policy?: ProviderPolicy;
 }
 
-interface ProviderPolicy {
-  minRewardPerUserUsdc: number;
-  maxProgramDurationDays: number;
-  maxProofAgeHours: number;
-  minWitnessCount: number;
-  requireHttpsBuyerCallback: boolean;
-  maxActivePrograms: number;
-}
-
 const DEFAULT_POLICY: ProviderPolicy = {
+  verificationMethod: "api-zktls",
+  dataSources: [],
+  dataTimingMode: "realtime",
   minRewardPerUserUsdc: 0.5,
   maxProgramDurationDays: 90,
   maxProofAgeHours: 24,
   minWitnessCount: 1,
   requireHttpsBuyerCallback: true,
   maxActivePrograms: 10,
+  policyDescription: "",
 };
 
+/* ─── Component ─── */
 export default function SellDataPage() {
   const { data: session, status } = useSession();
   const router = useRouter();
 
   const [provider, setProvider] = useState<ProviderInfo | null>(null);
-  const [selectedSources, setSelectedSources] = useState<string[]>([]);
   const [openclawUrl, setOpenclawUrl] = useState("");
   const [openclawToken, setOpenclawToken] = useState("");
   const [channel, setChannel] = useState<"whatsapp" | "telegram" | "discord">("whatsapp");
@@ -72,6 +121,9 @@ export default function SellDataPage() {
   const [policy, setPolicy] = useState<ProviderPolicy>(DEFAULT_POLICY);
   const [policySaving, setPolicySaving] = useState(false);
   const [policySaved, setPolicySaved] = useState(false);
+
+  /* data source input */
+  const [sourceInput, setSourceInput] = useState("");
 
   const [tasks, setTasks] = useState<Task[]>([]);
   const [loading, setLoading] = useState(true);
@@ -93,20 +145,18 @@ export default function SellDataPage() {
       .then((res) => res.json())
       .then((data) => {
         setProvider(data);
-        if (Array.isArray(data?.dataSources) && data.dataSources.length > 0) {
-          setSelectedSources(data.dataSources);
-        }
         if (data?.policy) {
-          setPolicy({
-            minRewardPerUserUsdc: Number(data.policy.minRewardPerUserUsdc ?? DEFAULT_POLICY.minRewardPerUserUsdc),
-            maxProgramDurationDays: Number(data.policy.maxProgramDurationDays ?? DEFAULT_POLICY.maxProgramDurationDays),
-            maxProofAgeHours: Number(data.policy.maxProofAgeHours ?? DEFAULT_POLICY.maxProofAgeHours),
-            minWitnessCount: Number(data.policy.minWitnessCount ?? DEFAULT_POLICY.minWitnessCount),
-            requireHttpsBuyerCallback: Boolean(
-              data.policy.requireHttpsBuyerCallback ?? DEFAULT_POLICY.requireHttpsBuyerCallback
-            ),
-            maxActivePrograms: Number(data.policy.maxActivePrograms ?? DEFAULT_POLICY.maxActivePrograms),
-          });
+          setPolicy((prev) => ({
+            ...prev,
+            ...data.policy,
+            dataSources: Array.isArray(data.policy.dataSources)
+              ? data.policy.dataSources
+              : Array.isArray(data.dataSources)
+                ? data.dataSources
+                : [],
+          }));
+        } else if (Array.isArray(data?.dataSources) && data.dataSources.length > 0) {
+          setPolicy((prev) => ({ ...prev, dataSources: data.dataSources }));
         }
       })
       .catch(() => setProvider({ registered: false }));
@@ -126,16 +176,40 @@ export default function SellDataPage() {
       .finally(() => setLoading(false));
   }, [status, stellarAddress]);
 
-  const toggleSource = (id: string) => {
-    setSelectedSources((prev) =>
-      prev.includes(id) ? prev.filter((s) => s !== id) : [...prev, id]
-    );
+  /* ── Data source management ── */
+  const addSource = () => {
+    const trimmed = sourceInput.trim();
+    if (!trimmed) return;
+    if (policy.dataSources.includes(trimmed.toLowerCase())) {
+      setSourceInput("");
+      return;
+    }
+    setPolicy((prev) => ({
+      ...prev,
+      dataSources: [...prev.dataSources, trimmed],
+    }));
+    setSourceInput("");
   };
 
+  const removeSource = (source: string) => {
+    setPolicy((prev) => ({
+      ...prev,
+      dataSources: prev.dataSources.filter((s) => s !== source),
+    }));
+  };
+
+  const handleSourceKeyDown = (e: React.KeyboardEvent) => {
+    if (e.key === "Enter") {
+      e.preventDefault();
+      addSource();
+    }
+  };
+
+  /* ── Register ── */
   const handleRegister = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (selectedSources.length === 0) {
-      setRegError("Select at least one data source");
+    if (policy.dataSources.length === 0) {
+      setRegError("Add at least one data source");
       return;
     }
     if (!openclawUrl) {
@@ -146,27 +220,55 @@ export default function SellDataPage() {
     setRegError(null);
 
     try {
-      const apiUrl = process.env.NEXT_PUBLIC_API_URL || "http://localhost:3001";
+      if (!stellarAddress) {
+        setRegError("Wallet not connected");
+        return;
+      }
 
-      const res = await fetch(`${apiUrl}/api/provider/register`, {
+      const supportedDataDescription = `${policy.verificationMethod} | ${policy.dataSources.join(", ")}`;
+
+      // Step 1: Upload provider policy to IPFS (client-side)
+      const providerData = {
+        stellarAddress,
+        dataSources: policy.dataSources,
+        supportedDataDescription,
+        policy,
+        openclawUrl,
+        channel,
+        registeredAt: new Date().toISOString(),
+      };
+
+      const ipfsHash = await uploadJsonToIpfs(providerData, {
+        name: `provider-${stellarAddress.slice(0, 8)}.json`,
+        keyvalues: { type: "provider" },
+      });
+
+      // Step 2: Write index to Stellar via Freighter
+      // Use stellarAddress as a short ID for the key
+      const shortId = stellarAddress.slice(0, 24);
+      const indexKey = `pr:${shortId}`;
+      const xdr = await buildManageDataTx(stellarAddress, indexKey, ipfsHash);
+      const txHash = await signAndSubmitTx(xdr);
+
+      // Step 3: Notify backend (facilitator awareness)
+      await apiFetch("/api/notify/provider", {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           stellarAddress,
-          dataSources: selectedSources,
-          openclawUrl,
+          ipfsHash,
+          txHash,
+          dataSources: policy.dataSources,
+          supportedDataDescription,
+          openclawUrl: openclawUrl || undefined,
           channel,
           contactInfo: openclawToken || "pending",
           policy,
         }),
-      });
+      }).catch((err) => console.warn("[sell] Backend notify failed:", err));
 
-      if (!res.ok) {
-        const data = await res.json().catch(() => ({}));
-        throw new Error(data.error || `Server error: ${res.status}`);
-      }
-
+      // Step 4: Bot config (still backend-only, has sensitive token)
       if (openclawToken) {
+        const apiUrl = process.env.NEXT_PUBLIC_API_URL || "http://localhost:3001";
         await fetch(`${apiUrl}/api/provider/bot-config`, {
           method: "POST",
           headers: { "Content-Type": "application/json" },
@@ -178,7 +280,7 @@ export default function SellDataPage() {
         }).catch(() => {});
       }
 
-      setProvider({ registered: true, dataSources: selectedSources, policy });
+      setProvider({ registered: true, dataSources: policy.dataSources, policy });
     } catch (err) {
       setRegError(err instanceof Error ? err.message : "Registration failed");
     } finally {
@@ -186,21 +288,46 @@ export default function SellDataPage() {
     }
   };
 
+  /* ── Save Policy → IPFS → Chain ── */
   const handleSavePolicy = async () => {
     if (!stellarAddress || !provider?.registered) return;
     setPolicySaving(true);
     setPolicySaved(false);
     try {
-      await apiFetch("/api/provider/policy", {
+      // Step 1: Upload policy to IPFS (client-side)
+      const policyData = {
+        ...policy,
+        stellarAddress,
+        updatedAt: new Date().toISOString(),
+      };
+
+      const policyCid = await uploadJsonToIpfs(policyData, {
+        name: `policy-${stellarAddress.slice(0, 8)}.json`,
+        keyvalues: { type: "policy" },
+      });
+
+      // Step 2: Write to Stellar via Freighter
+      const shortId = stellarAddress.slice(0, 24);
+      const indexKey = `pr:${shortId}`;
+      const xdr = await buildManageDataTx(stellarAddress, indexKey, policyCid);
+      const txHash = await signAndSubmitTx(xdr);
+
+      // Step 3: Notify backend
+      await apiFetch("/api/notify/policy", {
         method: "POST",
         body: JSON.stringify({
           stellarAddress,
-          policy,
+          ipfsHash: policyCid,
+          txHash,
+          policy: policyData,
         }),
-      });
+      }).catch((err) => console.warn("[sell] Policy notify failed:", err));
+
+      const updatedPolicy = { ...policy, policyCid };
+      setPolicy(updatedPolicy);
       setPolicySaved(true);
-      setTimeout(() => setPolicySaved(false), 2500);
-      setProvider((prev) => (prev ? { ...prev, policy } : prev));
+      setTimeout(() => setPolicySaved(false), 3000);
+      setProvider((prev) => (prev ? { ...prev, policy: updatedPolicy, dataSources: policy.dataSources } : prev));
     } catch {
       // silent UI fallback
     } finally {
@@ -208,31 +335,26 @@ export default function SellDataPage() {
     }
   };
 
+  /* ── Consent decision ── */
   const handleDecision = async (skillId: string, decision: "ACCEPT" | "REJECT") => {
     if (!session?.user?.pseudoId || !stellarAddress) return;
     setActionLoading(skillId);
 
     try {
       let txHash: string | undefined;
-      let publicKey: string | undefined;
 
       if (decision === "ACCEPT") {
-        // Sign and submit consent TX on Stellar via Freighter
         const hash = await freighter.signAndSubmitConsentTx(
           skillId,
           session.user.pseudoId,
           stellarAddress,
           "ACCEPT"
         );
-
         if (!hash) {
-          // User cancelled or Freighter error
           setActionLoading(null);
           return;
         }
-
         txHash = hash;
-        publicKey = stellarAddress;
       }
 
       await apiFetch("/api/consent/record", {
@@ -241,7 +363,7 @@ export default function SellDataPage() {
           skillId,
           pseudoId: session.user.pseudoId,
           decision,
-          ...(txHash ? { txHash, publicKey } : {}),
+          ...(txHash ? { txHash, publicKey: stellarAddress } : {}),
         }),
       });
 
@@ -259,6 +381,7 @@ export default function SellDataPage() {
     }
   };
 
+  /* ── Loading state ── */
   if (status === "loading" || loading) {
     return (
       <div className="mx-auto max-w-6xl px-4 py-12">
@@ -270,6 +393,7 @@ export default function SellDataPage() {
     );
   }
 
+  /* ── Policy matching ── */
   const effectivePolicy = provider?.policy || policy;
   const matchesPolicy = (task: Task) => {
     const rewardOk = task.rewardPerUser >= effectivePolicy.minRewardPerUserUsdc;
@@ -283,10 +407,9 @@ export default function SellDataPage() {
     return rewardOk && durationOk && witnessOk && proofAgeOk && callbackOk;
   };
 
-  const providerSources = provider?.dataSources || selectedSources;
+  const providerSources = provider?.dataSources || policy.dataSources;
   const allPending = tasks.filter((t) => {
     if (t.status !== "pending") return false;
-    // Filter by provider's supported data sources
     if (providerSources.length > 0 && !providerSources.includes(t.dataSource)) return false;
     return true;
   });
@@ -296,13 +419,301 @@ export default function SellDataPage() {
     .filter((t) => t.status === "accepted" || t.status === "completed")
     .slice(0, effectivePolicy.maxActivePrograms);
 
+  /* ── Shared Policy Form ── */
+  const PolicyForm = () => (
+    <div className="space-y-6">
+      {/* ── Verification Method ── */}
+      <div>
+        <h3 className="text-sm font-semibold uppercase tracking-wide text-emerald-300 mb-3">
+          Verification Method
+        </h3>
+        <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+          {VERIFICATION_METHODS.map((vm) => (
+            <button
+              key={vm.id}
+              type="button"
+              disabled={!vm.enabled}
+              onClick={() =>
+                vm.enabled && setPolicy((prev) => ({ ...prev, verificationMethod: vm.id }))
+              }
+              className={`relative rounded-lg border p-4 text-left transition-all ${
+                !vm.enabled
+                  ? "cursor-not-allowed border-slate-800 bg-slate-900/30 opacity-50"
+                  : policy.verificationMethod === vm.id
+                    ? "border-emerald-500 bg-emerald-500/10"
+                    : "border-slate-700 bg-slate-900/50 hover:border-slate-600"
+              }`}
+            >
+              <p className="text-sm font-semibold text-slate-100">{vm.label}</p>
+              <p className="mt-1 text-xs text-slate-400">{vm.desc}</p>
+              {!vm.enabled && (
+                <span className="absolute right-3 top-3 rounded-full bg-slate-700 px-2 py-0.5 text-[10px] font-medium text-slate-300">
+                  Coming Soon
+                </span>
+              )}
+            </button>
+          ))}
+        </div>
+      </div>
+
+      {/* ── Data Sources (free-form input) ── */}
+      <div>
+        <h3 className="text-sm font-semibold uppercase tracking-wide text-emerald-300 mb-1">
+          Data Sources
+        </h3>
+        <p className="mb-3 text-xs text-slate-500">
+          Type any API or data source you can provide. No restrictions — zkTLS will verify authenticity.
+        </p>
+        <div className="flex gap-2">
+          <input
+            type="text"
+            value={sourceInput}
+            onChange={(e) => setSourceInput(e.target.value)}
+            onKeyDown={handleSourceKeyDown}
+            placeholder="e.g. Fitbit, Strava, Twitter API, Bank XYZ, Custom REST endpoint..."
+            className="flow-input flex-1"
+          />
+          <Button
+            type="button"
+            size="sm"
+            variant="outline"
+            onClick={addSource}
+            disabled={!sourceInput.trim()}
+          >
+            Add
+          </Button>
+        </div>
+        {policy.dataSources.length > 0 && (
+          <div className="mt-3 flex flex-wrap gap-2">
+            {policy.dataSources.map((source) => (
+              <span
+                key={source}
+                className="inline-flex items-center gap-1.5 rounded-full border border-emerald-500/30 bg-emerald-500/10 px-3 py-1 text-xs font-medium text-emerald-300"
+              >
+                {source}
+                <button
+                  type="button"
+                  onClick={() => removeSource(source)}
+                  className="ml-0.5 text-emerald-300/60 hover:text-red-400 transition-colors"
+                >
+                  x
+                </button>
+              </span>
+            ))}
+          </div>
+        )}
+      </div>
+
+      {/* ── Data Timing ── */}
+      <div>
+        <h3 className="text-sm font-semibold uppercase tracking-wide text-emerald-300 mb-3">
+          Data Timing
+        </h3>
+        <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+          {TIMING_OPTIONS.map((opt) => (
+            <button
+              key={opt.id}
+              type="button"
+              onClick={() => setPolicy((prev) => ({ ...prev, dataTimingMode: opt.id }))}
+              className={`rounded-lg border p-3 text-left transition-all ${
+                policy.dataTimingMode === opt.id
+                  ? "border-emerald-500 bg-emerald-500/10"
+                  : "border-slate-700 bg-slate-900/50 hover:border-slate-600"
+              }`}
+            >
+              <p className="text-sm font-semibold text-slate-100">{opt.label}</p>
+              <p className="mt-1 text-xs text-slate-400">{opt.desc}</p>
+            </button>
+          ))}
+        </div>
+
+        {/* Historical date range */}
+        {policy.dataTimingMode === "historical" && (
+          <div className="mt-3 grid grid-cols-2 gap-3">
+            <div>
+              <label className="flow-label-sm">Start Date</label>
+              <input
+                type="date"
+                value={policy.historicalStartDate || ""}
+                onChange={(e) =>
+                  setPolicy((prev) => ({ ...prev, historicalStartDate: e.target.value }))
+                }
+                className="flow-input"
+              />
+            </div>
+            <div>
+              <label className="flow-label-sm">End Date</label>
+              <input
+                type="date"
+                value={policy.historicalEndDate || ""}
+                onChange={(e) =>
+                  setPolicy((prev) => ({ ...prev, historicalEndDate: e.target.value }))
+                }
+                className="flow-input"
+              />
+            </div>
+          </div>
+        )}
+
+        {/* Periodic frequency */}
+        {policy.dataTimingMode === "periodic" && (
+          <div className="mt-3 grid grid-cols-2 gap-3">
+            <div>
+              <label className="flow-label-sm">Frequency</label>
+              <select
+                value={policy.periodicFrequencyLabel || "daily"}
+                onChange={(e) =>
+                  setPolicy((prev) => ({
+                    ...prev,
+                    periodicFrequencyLabel: e.target.value,
+                    periodicInterval: e.target.value,
+                  }))
+                }
+                className="flow-input"
+              >
+                <option value="every-6h">Every 6 hours</option>
+                <option value="every-12h">Every 12 hours</option>
+                <option value="daily">Daily</option>
+                <option value="weekly">Weekly</option>
+                <option value="monthly">Monthly</option>
+              </select>
+            </div>
+            <div>
+              <label className="flow-label-sm">Custom Interval (optional)</label>
+              <input
+                type="text"
+                value={policy.periodicInterval || ""}
+                onChange={(e) =>
+                  setPolicy((prev) => ({ ...prev, periodicInterval: e.target.value }))
+                }
+                placeholder="e.g. every 3 days, twice per week..."
+                className="flow-input"
+              />
+            </div>
+          </div>
+        )}
+      </div>
+
+      {/* ── Policy Description ── */}
+      <div>
+        <h3 className="text-sm font-semibold uppercase tracking-wide text-emerald-300 mb-1">
+          Policy Description
+        </h3>
+        <p className="mb-2 text-xs text-slate-500">
+          Describe your data offering, conditions, and any special requirements. This will be public on-chain via IPFS.
+        </p>
+        <textarea
+          value={policy.policyDescription || ""}
+          onChange={(e) => setPolicy((prev) => ({ ...prev, policyDescription: e.target.value }))}
+          placeholder="e.g. I provide daily Fitbit health metrics (steps, heart rate, sleep). Data available from Jan 2024. Only for research purposes..."
+          rows={3}
+          className="flow-input resize-none"
+        />
+      </div>
+
+      {/* ── Constraints ── */}
+      <div>
+        <h3 className="text-sm font-semibold uppercase tracking-wide text-emerald-300 mb-3">
+          Constraints
+        </h3>
+        <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+          <div>
+            <label className="flow-label-sm">Min Reward (USDC/epoch)</label>
+            <input
+              type="number"
+              min={0}
+              step={0.01}
+              value={policy.minRewardPerUserUsdc}
+              onChange={(e) =>
+                setPolicy((prev) => ({ ...prev, minRewardPerUserUsdc: Number(e.target.value) }))
+              }
+              className="flow-input"
+            />
+          </div>
+          <div>
+            <label className="flow-label-sm">Max Program Duration (days)</label>
+            <input
+              type="number"
+              min={1}
+              max={365}
+              value={policy.maxProgramDurationDays}
+              onChange={(e) =>
+                setPolicy((prev) => ({ ...prev, maxProgramDurationDays: Number(e.target.value) }))
+              }
+              className="flow-input"
+            />
+          </div>
+          <div>
+            <label className="flow-label-sm">Max Proof Age (hours)</label>
+            <input
+              type="number"
+              min={1}
+              max={168}
+              value={policy.maxProofAgeHours}
+              onChange={(e) =>
+                setPolicy((prev) => ({ ...prev, maxProofAgeHours: Number(e.target.value) }))
+              }
+              className="flow-input"
+            />
+          </div>
+          <div>
+            <label className="flow-label-sm">Min Witness Count</label>
+            <input
+              type="number"
+              min={1}
+              max={10}
+              value={policy.minWitnessCount}
+              onChange={(e) =>
+                setPolicy((prev) => ({ ...prev, minWitnessCount: Number(e.target.value) }))
+              }
+              className="flow-input"
+            />
+          </div>
+          <div>
+            <label className="flow-label-sm">Max Active Programs</label>
+            <input
+              type="number"
+              min={1}
+              max={100}
+              value={policy.maxActivePrograms}
+              onChange={(e) =>
+                setPolicy((prev) => ({ ...prev, maxActivePrograms: Number(e.target.value) }))
+              }
+              className="flow-input"
+            />
+          </div>
+          <label className="flex items-center gap-2 text-sm text-slate-300">
+            <input
+              type="checkbox"
+              checked={policy.requireHttpsBuyerCallback}
+              onChange={(e) =>
+                setPolicy((prev) => ({ ...prev, requireHttpsBuyerCallback: e.target.checked }))
+              }
+              className="h-4 w-4 rounded border-slate-700 bg-slate-900"
+            />
+            Require HTTPS buyer callback
+          </label>
+        </div>
+      </div>
+
+      {/* Policy CID badge */}
+      {policy.policyCid && (
+        <div className="rounded-lg border border-slate-700 bg-slate-900/40 px-4 py-2 text-xs text-slate-400">
+          Policy on IPFS:{" "}
+          <span className="font-mono text-emerald-300">{policy.policyCid}</span>
+        </div>
+      )}
+    </div>
+  );
+
+  /* ─── Render ─── */
   return (
     <div className="mx-auto max-w-6xl px-4 py-10 space-y-8">
       <div>
         <span className="flow-badge">Sell Data</span>
         <h1 className="mt-3 text-3xl font-bold text-slate-100">Data Seller Dashboard</h1>
         <p className="mt-2 text-sm text-slate-400">
-          Configure who can buy your data and under which constraints. Your policy is applied before consent and proof execution.
+          Configure your data sources and sale policy. Your policy is uploaded to IPFS and registered on-chain — publicly verifiable by any buyer.
         </p>
       </div>
 
@@ -316,14 +727,16 @@ export default function SellDataPage() {
           <p className="text-2xl font-bold text-emerald-300">{active.length}</p>
         </div>
         <div className="flow-surface rounded-lg px-4 py-3">
-          <p className="text-slate-500">Supported Sources</p>
+          <p className="text-slate-500">Data Sources</p>
           <p className="text-2xl font-bold text-slate-100">
-            {provider?.dataSources?.length ?? selectedSources.length}
+            {provider?.dataSources?.length ?? policy.dataSources.length}
           </p>
         </div>
         <div className="flow-surface rounded-lg px-4 py-3">
           <p className="text-slate-500">Provider Status</p>
-          <p className="text-2xl font-bold text-slate-100">{provider?.registered ? "Active" : "Setup"}</p>
+          <p className="text-2xl font-bold text-slate-100">
+            {provider?.registered ? "Active" : "Setup"}
+          </p>
         </div>
       </div>
 
@@ -331,111 +744,11 @@ export default function SellDataPage() {
         <div className="flow-surface rounded-xl p-6">
           <h2 className="mb-2 text-lg font-semibold text-slate-100">Seller Onboarding</h2>
           <p className="mb-5 text-sm text-slate-400">
-            Select the sources you control, configure OpenClaw, and set your sale policy before receiving requests.
+            Define what data you can provide, set your verification method and sale policy, then configure OpenClaw for task delivery.
           </p>
 
-          <form onSubmit={handleRegister} className="space-y-5">
-            <div>
-              <h3 className="text-sm font-semibold uppercase tracking-wide text-emerald-300 mb-3">
-                Data Sources
-              </h3>
-              <div className="grid grid-cols-2 sm:grid-cols-4 gap-2">
-                {API_SOURCES.map((source) => (
-                  <button
-                    key={source.id}
-                    type="button"
-                    onClick={() => toggleSource(source.id)}
-                    className={`flow-chip ${selectedSources.includes(source.id) ? "selected" : ""}`}
-                  >
-                    {source.label}
-                  </button>
-                ))}
-              </div>
-            </div>
-
-            <div className="border-t border-slate-800 pt-5">
-              <h3 className="text-sm font-semibold uppercase tracking-wide text-emerald-300 mb-3">
-                Sale Policy
-              </h3>
-              <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
-                <div>
-                  <label className="flow-label-sm">Min Reward (USDC/epoch)</label>
-                  <input
-                    type="number"
-                    min={0}
-                    step={0.01}
-                    value={policy.minRewardPerUserUsdc}
-                    onChange={(e) =>
-                      setPolicy((prev) => ({ ...prev, minRewardPerUserUsdc: Number(e.target.value) }))
-                    }
-                    className="flow-input"
-                  />
-                </div>
-                <div>
-                  <label className="flow-label-sm">Max Program Duration (days)</label>
-                  <input
-                    type="number"
-                    min={1}
-                    max={365}
-                    value={policy.maxProgramDurationDays}
-                    onChange={(e) =>
-                      setPolicy((prev) => ({ ...prev, maxProgramDurationDays: Number(e.target.value) }))
-                    }
-                    className="flow-input"
-                  />
-                </div>
-                <div>
-                  <label className="flow-label-sm">Max Proof Age (hours)</label>
-                  <input
-                    type="number"
-                    min={1}
-                    max={168}
-                    value={policy.maxProofAgeHours}
-                    onChange={(e) =>
-                      setPolicy((prev) => ({ ...prev, maxProofAgeHours: Number(e.target.value) }))
-                    }
-                    className="flow-input"
-                  />
-                </div>
-                <div>
-                  <label className="flow-label-sm">Min Witness Count</label>
-                  <input
-                    type="number"
-                    min={1}
-                    max={10}
-                    value={policy.minWitnessCount}
-                    onChange={(e) =>
-                      setPolicy((prev) => ({ ...prev, minWitnessCount: Number(e.target.value) }))
-                    }
-                    className="flow-input"
-                  />
-                </div>
-                <div>
-                  <label className="flow-label-sm">Max Active Programs</label>
-                  <input
-                    type="number"
-                    min={1}
-                    max={100}
-                    value={policy.maxActivePrograms}
-                    onChange={(e) =>
-                      setPolicy((prev) => ({ ...prev, maxActivePrograms: Number(e.target.value) }))
-                    }
-                    className="flow-input"
-                  />
-                </div>
-                <label className="flex items-center gap-2 text-sm text-slate-300">
-                  <input
-                    type="checkbox"
-                    checked={policy.requireHttpsBuyerCallback}
-                    onChange={(e) =>
-                      setPolicy((prev) => ({ ...prev, requireHttpsBuyerCallback: e.target.checked }))
-                    }
-                    className="h-4 w-4 rounded border-slate-700 bg-slate-900"
-                  />
-                  Require HTTPS buyer callback
-                </label>
-              </div>
-            </div>
+          <form onSubmit={handleRegister} className="space-y-6">
+            <PolicyForm />
 
             <div className="border-t border-slate-800 pt-5">
               <h3 className="text-sm font-semibold uppercase tracking-wide text-emerald-300 mb-3">
@@ -484,7 +797,7 @@ export default function SellDataPage() {
               type="submit"
               variant="primary"
               isLoading={registering}
-              disabled={registering || selectedSources.length === 0}
+              disabled={registering || policy.dataSources.length === 0}
               className="w-full"
             >
               Activate Seller Profile
@@ -492,99 +805,19 @@ export default function SellDataPage() {
           </form>
         </div>
       ) : (
-        <div className="flow-surface rounded-xl p-4">
-          <div className="flex items-center justify-between">
+        <div className="flow-surface rounded-xl p-6">
+          <div className="flex items-center justify-between mb-4">
             <div>
               <p className="text-sm font-medium text-emerald-300">Provider Active</p>
               <p className="mt-1 text-xs text-slate-400">
-                Sources: {provider.dataSources?.join(", ") || "All sources"}
+                Sources: {provider.dataSources?.join(", ") || policy.dataSources.join(", ") || "Not configured"}
               </p>
             </div>
             <span className="flow-status-badge active">Active</span>
           </div>
-          <div className="mt-4 border-t border-slate-800 pt-4">
-            <h3 className="mb-3 text-sm font-semibold uppercase tracking-wide text-emerald-300">
-              Sale Policy
-            </h3>
-            <div className="grid grid-cols-1 gap-3 sm:grid-cols-3">
-              <div>
-                <label className="flow-label-sm">Min Reward (USDC/epoch)</label>
-                <input
-                  type="number"
-                  min={0}
-                  step={0.01}
-                  value={policy.minRewardPerUserUsdc}
-                  onChange={(e) =>
-                    setPolicy((prev) => ({ ...prev, minRewardPerUserUsdc: Number(e.target.value) }))
-                  }
-                  className="flow-input"
-                />
-              </div>
-              <div>
-                <label className="flow-label-sm">Max Program Duration (days)</label>
-                <input
-                  type="number"
-                  min={1}
-                  max={365}
-                  value={policy.maxProgramDurationDays}
-                  onChange={(e) =>
-                    setPolicy((prev) => ({ ...prev, maxProgramDurationDays: Number(e.target.value) }))
-                  }
-                  className="flow-input"
-                />
-              </div>
-              <div>
-                <label className="flow-label-sm">Max Proof Age (hours)</label>
-                <input
-                  type="number"
-                  min={1}
-                  max={168}
-                  value={policy.maxProofAgeHours}
-                  onChange={(e) =>
-                    setPolicy((prev) => ({ ...prev, maxProofAgeHours: Number(e.target.value) }))
-                  }
-                  className="flow-input"
-                />
-              </div>
-              <div>
-                <label className="flow-label-sm">Min Witness Count</label>
-                <input
-                  type="number"
-                  min={1}
-                  max={10}
-                  value={policy.minWitnessCount}
-                  onChange={(e) =>
-                    setPolicy((prev) => ({ ...prev, minWitnessCount: Number(e.target.value) }))
-                  }
-                  className="flow-input"
-                />
-              </div>
-              <div>
-                <label className="flow-label-sm">Max Active Programs</label>
-                <input
-                  type="number"
-                  min={1}
-                  max={100}
-                  value={policy.maxActivePrograms}
-                  onChange={(e) =>
-                    setPolicy((prev) => ({ ...prev, maxActivePrograms: Number(e.target.value) }))
-                  }
-                  className="flow-input"
-                />
-              </div>
-              <label className="flex items-center gap-2 text-sm text-slate-300">
-                <input
-                  type="checkbox"
-                  checked={policy.requireHttpsBuyerCallback}
-                  onChange={(e) =>
-                    setPolicy((prev) => ({ ...prev, requireHttpsBuyerCallback: e.target.checked }))
-                  }
-                  className="h-4 w-4 rounded border-slate-700 bg-slate-900"
-                />
-                Require HTTPS buyer callback
-              </label>
-            </div>
-            <div className="mt-3 flex items-center gap-3">
+          <div className="border-t border-slate-800 pt-4">
+            <PolicyForm />
+            <div className="mt-4 flex items-center gap-3">
               <Button
                 size="sm"
                 variant="primary"
@@ -592,9 +825,13 @@ export default function SellDataPage() {
                 disabled={policySaving}
                 isLoading={policySaving}
               >
-                Save Policy
+                Save Policy to IPFS
               </Button>
-              {policySaved && <span className="text-xs text-emerald-300">Policy saved.</span>}
+              {policySaved && (
+                <span className="text-xs text-emerald-300">
+                  Policy saved & uploaded to IPFS
+                </span>
+              )}
             </div>
           </div>
         </div>
@@ -618,10 +855,12 @@ export default function SellDataPage() {
                     <h3 className="truncate text-sm font-semibold text-slate-100">{task.title}</h3>
                     <p className="mt-1 text-xs text-slate-400">
                       {task.dataSource} | {task.metrics.slice(0, 3).join(", ")} |{" "}
-                      <span className="font-medium text-emerald-300">{task.rewardPerUser} USDC/epoch</span>
+                      <span className="font-medium text-emerald-300">
+                        {task.rewardPerUser} USDC/epoch
+                      </span>
                     </p>
                     <p className="mt-1 text-xs text-slate-500">
-                      Pipeline: consent → proof → escrow release
+                      Pipeline: consent &rarr; proof &rarr; escrow release
                     </p>
                   </div>
                   <div className="flex gap-2 shrink-0">
@@ -652,7 +891,9 @@ export default function SellDataPage() {
 
       {active.length > 0 && (
         <div>
-          <h2 className="mb-3 text-lg font-semibold text-slate-100">Running Programs ({active.length})</h2>
+          <h2 className="mb-3 text-lg font-semibold text-slate-100">
+            Running Programs ({active.length})
+          </h2>
           <div className="space-y-3">
             {active.map((task) => (
               <div key={task.skillId} className="flow-surface rounded-xl p-4">
@@ -673,7 +914,9 @@ export default function SellDataPage() {
 
       {tasks.length === 0 && provider?.registered && (
         <div className="flow-surface rounded-xl py-12 text-center text-slate-400">
-          <p className="text-sm">No active programs yet. New data requests will appear here when available.</p>
+          <p className="text-sm">
+            No active programs yet. New data requests will appear here when available.
+          </p>
         </div>
       )}
     </div>

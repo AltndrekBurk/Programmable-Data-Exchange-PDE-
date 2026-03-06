@@ -33,19 +33,19 @@ Kullanıcılar veri çekme standartları (MCP tool) oluşturup marketplace'e yü
 
 ## Aktörler
 
-**Veri İsteyen** — Siteye gelir, MCP/skill oluşturur VEYA marketplace'den hazır olanı seçip özelleştirir, USDC escrow'a kilitler, kanıtlanmış veri paketini alır. MVP'de KYC yok.
+**Veri İsteyen** — Siteye gelir, MCP/skill oluşturur VEYA marketplace'den hazır olanı seçip özelleştirir, USDC escrow'a kilitler, kanıtlanmış veri paketini alır(xk-tls kaynağı ve zamanı). 
 
 **MCP Creator** — Veri çekme standardı oluşturup marketplace'e yükler (IPFS'e). Birisi standardını kullanırsa kullanım başı kazanç alır. Akıllı kontrat ile kullanılabilirlik değerlendirmesi yapılır.
 
-**Veri Sağlayıcı** — OpenClaw bot kullanıcısı. Siteye kaydolur, desteklediği veri türünü (API/Device) işaretler. Siteden veya WhatsApp/Telegram'dan görev kabul eder. Kabul ederse Stellar'a consent TX yazılır.
+**Veri Sağlayıcı** — OpenClaw bot kullanıcısı. Siteye kaydolur, desteklediği veri türünü (API/Device/fhe veri aralığı net değer / zk - seçeneki sorular için) işaretler. Siteden veya WhatsApp/Telegram'dan görev kabul eder. Kabul ederse Stellar'a consent TX yazılır.
 
-**Platform (biz)** — Facilitator. Skill'i IPFS'e yükler, Stellar'a kaydeder, sağlayıcılara iletir, proof'u doğrular, escrow'u tetikler, talep edene sonucu teslim eder. Ham veriye hiçbir zaman dokunmaz.
+**Platform (biz)** — Facilitator. Skill'i IPFS'e yükler, Stellar'a kaydeder, sağlayıcılara iletir, proof'u doğrular, escrow'u tetikler, talep edene sonucu teslim eder. Ham veriye hiçbir zaman dokunmaz.-- ipfs ye forntend app den hereks kendi yüklemesi lazımdı ama bazıalrı öyle bazıları böyle şuanlık veri iletimi şifreli
 
-**OpenClaw** — Kullanıcının self-hosted AI gateway'i. Platform `POST /hooks/agent` ile mesaj gönderir (`channel: "whatsapp"`, `to: "+90..."`), kullanıcı mesajlaşma uygulamasından karar verir. OpenClaw Stellar'ı dinler, veriyi çeker, ZK proof üretir, platforma gönderir.
+**OpenClaw** — Kullanıcının self-hosted AI gateway'i. Platform `POST /hooks/agent` ile mesaj gönderir (`channel: "whatsapp"`, `to: "+90..."`), kullanıcı mesajlaşma uygulamasından karar verir. OpenClaw Stellar'ı dinler, veriyi çeker, ZK proof üretir aslında zk-tls veri https doğrulama, platforma gönderir.
 
 **Stellar** — İki rol: event bus (consent kararı on-chain) ve escrow (USDC kilidi). Soroban escrow contract Rust ile yazılıyor. 3-way release (sağlayıcı %70 / platform %20 / dispute %10) tek TX ile atomik. **Asıl ödeme Stellar ağında.** Testnet USDC SAC: `CBIELTK6YBZJU5UP2WWQEUCYKLPU6AUNZ2BQ4WWFEIE3USCIHMXQDAMA`
 
-**Reclaim Protocol** — ZK-TLS altyapısı. "Bu veri gerçekten X API'sinden geldi" kanıtını üretiyor. SDK: `@reclaimprotocol/js-sdk` + `@reclaimprotocol/zk-fetch`. Fitbit için built-in provider yok — `zkFetch` ile custom yazılıyor.
+**Reclaim Protocol** — ZK-TLS altyapısı. "Bu veri gerçekten X API'sinden geldi" kanıtını üretiyor. SDK: `@reclaimprotocol/js-sdk` + `@reclaimprotocol/zk-fetch`. X uygulaması için built-in provider yok — `zkFetch` ile custom yazılıyor.
 
 **X402** — Coinbase'in HTTP ödeme protokolü. **Stellar'da çalışıyor** (Soroban authorization + OpenZeppelin Relayer x402 Plugin). Proof tesliminde spam engeli, veri tesliminde ödeme garantisi. Tüm X402 ödemeleri Stellar testnet üzerinden USDC ile.
 

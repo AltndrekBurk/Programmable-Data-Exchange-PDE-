@@ -172,6 +172,14 @@ export class StorageService {
   }
 
   // =========================================================================
+  // CACHE-ONLY (for notify endpoints — client already wrote IPFS + Stellar)
+  // =========================================================================
+
+  async cacheOnly<T>(type: EntityType, id: string, ipfsHash: string, data: T): Promise<void> {
+    this.cache.set(type, id, ipfsHash, data)
+  }
+
+  // =========================================================================
   // RAW (arbitrary JSON to IPFS only, no Stellar index)
   // =========================================================================
 
