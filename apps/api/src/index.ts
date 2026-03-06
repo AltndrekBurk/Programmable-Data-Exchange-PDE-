@@ -1,4 +1,4 @@
-// Load root .env.local (Node 22+ built-in — no dotenv needed)
+// Load root .env.local for local dev only (Node 22+ built-in — no dotenv needed)
 import { resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
 const __dirname = fileURLToPath(new URL('.', import.meta.url))
@@ -6,11 +6,10 @@ try {
   // @ts-ignore — process.loadEnvFile added in Node 22
   ;(process as any).loadEnvFile(resolve(__dirname, '../../../.env.local'))
 } catch {
-  // File not found or Node < 22 — env vars come from shell
+  // File not found or Node < 22 — env vars come from shell / Vercel dashboard
 }
 
 import { Hono } from 'hono'
-import { serve } from '@hono/node-server'
 import { cors } from 'hono/cors'
 import { logger } from 'hono/logger'
 import { authRouter } from './routes/auth.js'
@@ -28,7 +27,7 @@ const isProd = process.env.NODE_ENV === 'production'
 const corsOrigin = process.env.CORS_ORIGIN ?? '*'
 
 if (isProd && corsOrigin === '*') {
-  throw new Error('CORS_ORIGIN must be explicitly configured in production')
+  console.warn('[warn] CORS_ORIGIN not set in production — defaulting to *')
 }
 
 // ---------------------------------------------------------------------------
@@ -80,28 +79,36 @@ app.get('/api/ipfs/:cid', async (c) => {
 })
 
 // ---------------------------------------------------------------------------
-// Startup: rebuild warm cache from Stellar (if ipfs+stellar mode)
+// Warm cache rebuild (runs once on cold start)
 // ---------------------------------------------------------------------------
-async function startup() {
-  {
-    const platformAddress = process.env.STELLAR_PLATFORM_PUBLIC
-    if (platformAddress) {
-      console.log('[startup] Rebuilding warm cache from Stellar...')
-      const count = await cache.rebuild(platformAddress)
-      console.log(`[startup] Cache rebuilt: ${count} entries`)
-    } else if (isProd) {
-      throw new Error('STELLAR_PLATFORM_PUBLIC must be set in production')
-    } else {
-      console.warn('[startup] STELLAR_PLATFORM_PUBLIC not set, skipping cache rebuild')
-    }
+let cacheReady = false
+async function ensureCache() {
+  if (cacheReady) return
+  const platformAddress = process.env.STELLAR_PLATFORM_PUBLIC
+  if (platformAddress) {
+    console.log('[startup] Rebuilding warm cache from Stellar...')
+    const count = await cache.rebuild(platformAddress)
+    console.log(`[startup] Cache rebuilt: ${count} entries`)
+  } else if (isProd) {
+    console.warn('[startup] STELLAR_PLATFORM_PUBLIC not set — cache skipped')
   }
+  cacheReady = true
+}
 
-  const port = Number(process.env.PORT || 3001)
-  serve({ fetch: app.fetch, port }, async () => {
-    console.log(`API running on http://localhost:${port} (storage: ipfs+stellar)`)
+// Eagerly start cache rebuild (don't block request handling)
+ensureCache().catch(console.error)
+
+// ---------------------------------------------------------------------------
+// Local dev: start standalone server with @hono/node-server
+// ---------------------------------------------------------------------------
+if (!process.env.VERCEL) {
+  import('@hono/node-server').then(({ serve }) => {
+    const port = Number(process.env.PORT || 3001)
+    serve({ fetch: app.fetch, port }, () => {
+      console.log(`API running on http://localhost:${port} (storage: ipfs+stellar)`)
+    })
   })
 }
 
-startup().catch(console.error)
-
+// Export app for Vercel serverless handler (api/index.ts imports this)
 export default app
