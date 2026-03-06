@@ -21,7 +21,8 @@
     "@dataeconomy/reclaim": "*",
     "@dataeconomy/ipfs": "*",
     "@dataeconomy/pseudonym": "*",
-    "@dataeconomy/storage": "*"
+    "@dataeconomy/storage": "*",
+    "husky": "^9.1.7"
   },
   "devDependencies": {
     "tsx": "^4.19.0",
