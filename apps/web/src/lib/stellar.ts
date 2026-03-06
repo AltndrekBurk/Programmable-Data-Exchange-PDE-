@@ -12,7 +12,7 @@ export const SOROBAN_RPC_URL = process.env.NEXT_PUBLIC_SOROBAN_RPC_URL || "https
 export const NETWORK_PASSPHRASE = "Test SDF Network ; September 2015";
 
 /** Entity type prefixes — must match packages/storage/src/warm-cache.ts */
-const PREFIXES: Record<string, string> = {
+export const PREFIXES: Record<string, string> = {
   skill: "sk:",
   mcp: "mc:",
   proof: "pf:",
@@ -153,7 +153,7 @@ export async function readAccountData(
   const account = await server.loadAccount(address);
   const dataMap = new Map<string, string>();
 
-  const dataAttr = (account as Record<string, unknown>).data_attr as Record<string, string> || {};
+  const dataAttr = ((account as unknown as Record<string, unknown>).data_attr as Record<string, string>) || {};
 
   for (const [key, base64Value] of Object.entries(dataAttr)) {
     if (typeof base64Value === "string") {
@@ -163,4 +163,35 @@ export async function readAccountData(
   }
 
   return dataMap;
+}
+
+
+export type ChainEntityType = "skill" | "mcp" | "proof" | "provider" | "botconfig" | "escrow" | "review";
+
+export interface ChainIndexEntry {
+  key: string;
+  id: string;
+  ipfsHash: string;
+}
+
+export function parseEntityIdFromKey(key: string, type: ChainEntityType): string | null {
+  const prefix = PREFIXES[type];
+  if (!key.startsWith(prefix)) return null;
+  return key.slice(prefix.length);
+}
+
+export async function listEntityEntriesFromAccount(
+  address: string,
+  type: ChainEntityType
+): Promise<ChainIndexEntry[]> {
+  const dataMap = await readAccountData(address);
+  const entries: ChainIndexEntry[] = [];
+
+  for (const [key, value] of dataMap.entries()) {
+    const id = parseEntityIdFromKey(key, type);
+    if (!id || !value) continue;
+    entries.push({ key, id, ipfsHash: value });
+  }
+
+  return entries;
 }

@@ -97,6 +97,50 @@ function CreateSkillInner() {
 
       const escrowAddress = process.env.NEXT_PUBLIC_ESCROW_ADDRESS || "DEPLOY_ESCROW_FIRST";
       setResult({ skillId, ipfsHash, escrowAddress, stellarTx: txHash });
+      const stellarAddress = (session?.user as { stellarAddress?: string } | undefined)?.stellarAddress;
+      if (!stellarAddress) {
+        throw new Error("Wallet not connected");
+      }
+
+      const skillId = crypto.randomUUID();
+      const skillPayload = {
+        id: skillId,
+        ...body,
+        status: "active",
+        createdAt: new Date().toISOString(),
+        expiresAt: new Date(Date.now() + body.durationDays * 24 * 60 * 60 * 1000).toISOString(),
+      };
+
+      // 1) Frontend -> Pinata HTTPS API
+      const ipfsHash = await uploadJsonToIpfs(skillPayload, {
+        name: `skill-${skillId.slice(0, 8)}.json`,
+        keyvalues: { type: "skill", skillId: skillId.slice(0, 32) },
+      });
+
+      // 2) Frontend -> Stellar (Freighter signed manage_data)
+      const indexKey = buildIndexKey("skill", skillId);
+      const xdr = await buildManageDataTx(stellarAddress, indexKey, ipfsHash);
+      const txHash = await signAndSubmitTx(xdr);
+
+      // 3) Backend notify only (facilitator awareness)
+      await apiFetch("/api/notify/skill", {
+        method: "POST",
+        body: JSON.stringify({
+          skillId,
+          ipfsHash,
+          txHash,
+          stellarAddress,
+          data: body,
+        }),
+      }).catch((notifyErr) => {
+        console.warn("[skills/create] backend notify failed", notifyErr);
+      });
+
+      setResult({
+        skillId,
+        ipfsHash,
+        escrowAddress: process.env.NEXT_PUBLIC_PLATFORM_ESCROW_ADDRESS || "DEPLOY_ESCROW_FIRST",
+      });
     } catch (err) {
       setError(err instanceof Error ? err.message : "Something went wrong");
     } finally {
