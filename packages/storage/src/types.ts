@@ -155,6 +155,9 @@ export interface EscrowRecord {
   providerShare: number
   platformShare: number
   disputePool: number
+  /** Optional MCP creator payout (deducted from platform share) */
+  mcpCreatorAddress?: string
+  mcpCreatorShare?: number
   status: 'locked' | 'releasing' | 'released' | 'disputed' | 'refunded'
   createdAt: string
   updatedAt: string
