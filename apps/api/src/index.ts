@@ -110,5 +110,6 @@ if (!process.env.VERCEL) {
   })
 }
 
-// Export app for Vercel serverless handler (api/index.ts imports this)
-export default app
+// Vercel serverless: default export must be handle(app)
+import { handle } from 'hono/vercel'
+export default handle(app)
