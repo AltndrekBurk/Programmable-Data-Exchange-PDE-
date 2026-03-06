@@ -129,6 +129,10 @@ export function createProofsRouter(storage: StorageService, escrow: EscrowAdapte
       return c.json({ error: 'Buyer callbackUrl bulunamadi' }, 409)
     }
 
+    if (isProd && !skill.deliveryPublicKey) {
+      return c.json({ error: 'deliveryPublicKey zorunlu (buyer decrypt key)' }, 400)
+    }
+
     if (callbackUrl && !hasDeliveryPayload && isProd) {
       return c.json({ error: 'Delivery payload eksik' }, 400)
     }
@@ -156,6 +160,16 @@ export function createProofsRouter(storage: StorageService, escrow: EscrowAdapte
         }, 400)
       }
 
+      if (body.delivery?.checksum) {
+        const expectedChecksum = crypto
+          .createHash('sha256')
+          .update(body.delivery.encryptedPayload)
+          .digest('hex')
+        if (expectedChecksum !== body.delivery.checksum) {
+          return c.json({ error: 'Encrypted payload checksum mismatch' }, 400)
+        }
+      }
+
       const deliveryBody = {
         skillId: body.skillId,
         proofHash,
@@ -177,6 +191,7 @@ export function createProofsRouter(storage: StorageService, escrow: EscrowAdapte
             'X-DataEconomy-Proof-Hash': proofHash,
             'X-DataEconomy-Skill-Id': body.skillId,
             'X-DataEconomy-Delivery': 'x402-verified',
+            'X-DataEconomy-Delivery-Key': skill.deliveryPublicKey || 'unset',
           },
           body: JSON.stringify(deliveryBody),
           signal: AbortSignal.timeout(deliveryTimeoutMs),

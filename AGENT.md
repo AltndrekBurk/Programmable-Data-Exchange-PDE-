@@ -768,3 +768,13 @@ A: Yes! Create a custom-provider tool following the template. Ensure the API end
 - Buyer callback must be HTTPS in production.
 - Facilitator relays encrypted payload; plaintext raw dataset should not persist on facilitator.
 
+
+
+### Buyer-Seller encrypted delivery key model (Production)
+- Buyer creates a delivery keypair locally (X25519 / age / NaCl).
+- Buyer publishes **deliveryPublicKey** inside skill metadata (IPFS + on-chain index).
+- OpenClaw fetches skill metadata, encrypts payload with deliveryPublicKey.
+- Facilitator only relays encryptedPayload + checksum + proofHash to buyer callback.
+- Buyer callback decrypts using buyer private key and validates integrity (`sha256(encryptedPayload)` vs checksum + proofHash binding).
+- HTTPS proxy can terminate TLS but **must not** perform payload decryption.
+- Facilitator must never persist plaintext payload.

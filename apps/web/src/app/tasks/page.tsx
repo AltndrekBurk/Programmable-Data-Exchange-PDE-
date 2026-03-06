@@ -6,7 +6,6 @@ import { useEffect, useState } from "react";
 import { apiFetch } from "@/lib/api";
 import { fetchFromIpfs } from "@/lib/ipfs";
 import { readAccountData } from "@/lib/stellar";
-import { listEntityEntriesFromAccount } from "@/lib/stellar";
 import Button from "@/components/ui/Button";
 import { useToast } from "@/components/ui/Toast";
 import { useFreighter } from "@/hooks/useFreighter";
@@ -111,40 +110,6 @@ export default function TasksPage() {
 
         setTasks(chainTasks);
       } catch (err) {
-    const platformAddress = process.env.NEXT_PUBLIC_STELLAR_PLATFORM_PUBLIC;
-    if (!platformAddress) {
-      toast("NEXT_PUBLIC_STELLAR_PLATFORM_PUBLIC eksik", "error");
-      setTasks([]);
-      setLoading(false);
-      return;
-    }
-
-    listEntityEntriesFromAccount(platformAddress, "skill")
-      .then(async (entries) => {
-        const onChain = await Promise.all(
-          entries.map(async (entry) => {
-            try {
-              const s = await fetchFromIpfs<SkillItem & { id?: string }>(entry.ipfsHash);
-              return {
-                id: s.id || entry.id,
-                skillId: s.id || entry.id,
-                title: s.title,
-                dataSource: s.dataSource,
-                metrics: s.metrics ?? [],
-                rewardPerUser: s.rewardPerUser,
-                durationDays: s.durationDays ?? 30,
-                status: "pending" as const,
-                expiresAt: s.expiresAt,
-              } as Task;
-            } catch {
-              return null;
-            }
-          })
-        );
-
-        setTasks(onChain.filter((t): t is Task => t !== null));
-      })
-      .catch((err: unknown) => {
         const msg = err instanceof Error ? err.message : "Failed to load tasks";
         toast(msg, "error");
         setTasks([]);
