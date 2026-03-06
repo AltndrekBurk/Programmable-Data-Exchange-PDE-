@@ -1,12 +1,14 @@
-// Load root .env.local for local dev only (Node 22+ built-in — no dotenv needed)
+// Load root .env.local for local dev only (skip on Vercel — env vars come from dashboard)
 import { resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
-const __dirname = fileURLToPath(new URL('.', import.meta.url))
-try {
-  // @ts-ignore — process.loadEnvFile added in Node 22
-  ;(process as any).loadEnvFile(resolve(__dirname, '../../../.env.local'))
-} catch {
-  // File not found or Node < 22 — env vars come from shell / Vercel dashboard
+if (!process.env.VERCEL) {
+  try {
+    const __dirname = fileURLToPath(new URL('.', import.meta.url))
+    // @ts-ignore — process.loadEnvFile added in Node 22
+    ;(process as any).loadEnvFile(resolve(__dirname, '../../../.env.local'))
+  } catch {
+    // File not found or Node < 22
+  }
 }
 
 import { Hono } from 'hono'
@@ -96,7 +98,10 @@ async function ensureCache() {
 }
 
 // Eagerly start cache rebuild (don't block request handling)
-ensureCache().catch(console.error)
+// On Vercel, skip eager rebuild — do it lazily on first relevant request
+if (!process.env.VERCEL) {
+  ensureCache().catch(console.error)
+}
 
 // ---------------------------------------------------------------------------
 // Local dev: start standalone server with @hono/node-server
