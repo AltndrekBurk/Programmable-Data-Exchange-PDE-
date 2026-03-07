@@ -101,7 +101,7 @@ export function createMarketplaceRouter(storage: StorageService) {
     const body = c.req.valid("json");
     const id = uuidv4();
     const secret = process.env.PSEUDONYM_SECRET;
-    if (!secret) return c.json({ error: "PSEUDONYM_SECRET yapılandırılmamış" }, 500);
+    if (!secret) return c.json({ error: "PSEUDONYM_SECRET not configured" }, 500);
 
     const creatorPseudo = body.creatorAddress
       ? generatePseudonym(secret, body.creatorAddress).pseudonym
@@ -232,7 +232,7 @@ export function createMarketplaceRouter(storage: StorageService) {
         console.warn("[marketplace] Volume index write failed (non-critical):", err);
       }
     } else if (isProd && paidAmount > 0) {
-      return c.json({ error: "STELLAR_PLATFORM_SECRET yapılandırılmamış" }, 500);
+      return c.json({ error: "STELLAR_PLATFORM_SECRET not configured" }, 500);
     }
 
     return c.json({

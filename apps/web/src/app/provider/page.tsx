@@ -39,7 +39,7 @@ export default function ProviderRegistrationPage() {
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!capabilities.trim()) {
-      setError("Lütfen sağlayabildiğin veri türlerini ve kaynaklarını açıklama alanına yaz.");
+      setError("Please describe the data types and sources you can provide.");
       return;
     }
     if (!openclawUrl) {
@@ -49,7 +49,7 @@ export default function ProviderRegistrationPage() {
 
     const stellarAddress = (session?.user as { stellarAddress?: string })?.stellarAddress;
     if (!stellarAddress) {
-      setError("Freighter wallet bağlantısı bulunamadı");
+      setError("Freighter wallet connection not found");
       return;
     }
 
@@ -140,23 +140,23 @@ export default function ProviderRegistrationPage() {
       <span className="flow-badge">Provider Onboarding</span>
       <h1 className="mt-3 text-3xl font-bold text-slate-100">Register as Provider</h1>
       <p className="mt-2 mb-8 text-sm text-slate-400">
-        Açıklamayı frontend&apos;den doğrudan IPFS&apos;e yükleyip Freighter ile zincire yazarsın; backend sadece TX hash ile haberdar edilir.
+        Your description is uploaded directly to IPFS from the browser and indexed on-chain via Freighter; the backend is only notified with the TX hash.
       </p>
 
       <form onSubmit={handleSubmit} className="space-y-6">
         <div className="flow-surface rounded-xl p-6 space-y-5">
           <div>
             <h3 className="text-sm font-semibold uppercase tracking-wide text-emerald-300 mb-3">
-              Sağlayabildiğin veri ve kaynaklar
+              Data and sources you can provide
             </h3>
             <p className="text-xs text-slate-500 mb-2">
-              Örnek: Fitbit günlük adım, Strava koşu aktiviteleri, belirli banka API&apos;leri, sadece 2024 sonrası veri.
+              Example: Fitbit daily steps, Strava running activities, specific bank APIs, data from 2024 onwards only.
             </p>
             <textarea
               className="flow-input min-h-[140px]"
               value={capabilities}
               onChange={(e) => setCapabilities(e.target.value)}
-              placeholder="Sağlayabildiğin API ve cihaz veri tiplerini, hangi hesaplardan/cihazlardan çektiğini ve sınırlarını ayrıntılı yaz."
+              placeholder="Describe the API and device data types you can provide, which accounts/devices you pull from, and any limitations."
               required
             />
           </div>

@@ -139,7 +139,7 @@ export default function TasksPage() {
       if (decision === "ACCEPT") {
         const pk = await freighter.connect();
         if (!pk || pk !== publicKey) {
-          toast("Freighter cüzdan adresi ile oturum adresi uyuşmuyor", "error");
+          toast("Freighter wallet address does not match session address", "error");
           throw new Error("Address mismatch");
         }
         txHash = await freighter.signAndSubmitConsentTx(skillId, pseudoId, publicKey, decision);

@@ -16,16 +16,16 @@ const notifyUserSchema = z.object({
   openclawToken: z.string(),
 })
 
-// POST /api/consent/notify — OpenClaw üzerinden kullanıcıya bildirim gönder
+// POST /api/consent/notify — Send notification to user via OpenClaw
 consentRouter.post('/notify', zValidator('json', notifyUserSchema), async (c) => {
   const body = c.req.valid('json')
 
   const secret = process.env.PSEUDONYM_SECRET
-  if (!secret) return c.json({ error: 'Sunucu yapılandırma hatası: PSEUDONYM_SECRET eksik' }, 500)
+  if (!secret) return c.json({ error: 'Server configuration error: PSEUDONYM_SECRET missing' }, 500)
 
   const pseudoId = generatePseudonym(secret, body.stellarAddress).pseudonym
 
-  const message = `📊 Yeni veri görevi mevcut!\n\nSkill: ${body.skillId.slice(0, 8)}...\n\nKabul etmek için "evet", reddetmek için "hayır" yaz.`
+  const message = `📊 New data task available!\n\nSkill: ${body.skillId.slice(0, 8)}...\n\nReply "yes" to accept, "no" to decline.`
 
   try {
     const res = await fetch(`${body.openclawUrl}/hooks/agent`, {
@@ -47,16 +47,16 @@ consentRouter.post('/notify', zValidator('json', notifyUserSchema), async (c) =>
     })
 
     if (!res.ok) {
-      return c.json({ error: 'OpenClaw bildirimi başarısız', status: res.status }, 502)
+      return c.json({ error: 'OpenClaw notification failed', status: res.status }, 502)
     }
 
     return c.json({ status: 'notified', skillId: body.skillId, pseudoId })
   } catch (err) {
-    return c.json({ error: 'OpenClaw erişilemiyor' }, 503)
+    return c.json({ error: 'OpenClaw unreachable' }, 503)
   }
 })
 
-// POST /api/consent/record — Kullanıcı kararını Stellar'a yaz
+// POST /api/consent/record — Write user decision to Stellar
 const recordConsentSchema = z.object({
   skillId: z.string().uuid(),
   pseudoId: z.string(),

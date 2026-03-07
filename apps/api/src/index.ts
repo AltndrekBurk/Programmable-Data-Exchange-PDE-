@@ -52,7 +52,7 @@ app.get('/health', (c) => c.json({
 // Static routers (no storage dependency)
 app.route('/api/auth', authRouter)
 app.route('/api/consent', consentRouter)
-// Simülasyon / otomatik demo seed endpoint'i kaldırıldı
+// Simulation / auto-demo seed endpoint removed
 
 // Storage-backed routers
 app.route('/api/skills', createSkillsRouter(storage))

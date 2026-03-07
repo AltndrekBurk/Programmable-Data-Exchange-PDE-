@@ -1,6 +1,6 @@
 import { z } from "zod";
 
-// Stellar public key: G ile başlar, 56 karakter (Base32 encoded)
+// Stellar public key: starts with G, 56 characters (Base32 encoded)
 export const stellarAuthSchema = z.object({
   publicKey: z.string().startsWith("G").length(56),
   signature: z.string().min(1),

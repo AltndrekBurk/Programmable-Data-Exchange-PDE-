@@ -33,7 +33,7 @@ export async function apiFetch<T>(
     return res.json() as Promise<T>;
   } catch (err) {
     if ((err as Error).name === "AbortError") {
-      throw new Error("Sunucu yanit vermedi (zaman asimi)");
+      throw new Error("Server did not respond (timeout)");
     }
     throw err;
   } finally {

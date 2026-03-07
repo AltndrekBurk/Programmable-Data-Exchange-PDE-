@@ -49,7 +49,7 @@ const BASE_SPEED = 0.0022;
 const SPAWN_INTERVAL = 3000;
 
 // ═══════════════════════════════════════════════════
-// NODES (SİSTEM AKTÖRLERİ)
+// NODES (SYSTEM ACTORS)
 // ═══════════════════════════════════════════════════
 const NODES: NodeDef[] = [
   {
@@ -154,7 +154,7 @@ const NODES: NodeDef[] = [
 ];
 
 // ═══════════════════════════════════════════════════
-// EDGES (AKIŞ ÇİZGİLERİ)
+// EDGES (FLOW LINES)
 // ═══════════════════════════════════════════════════
 const EDGES: EdgeDef[] = [
   // Creator -> Marketplace

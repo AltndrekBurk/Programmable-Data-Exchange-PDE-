@@ -56,7 +56,7 @@ export function createSkillsRouter(storage: StorageService) {
     }
 
     if (isProd && !escrowAddress) {
-      return c.json({ error: 'PLATFORM_ESCROW_ADDRESS yapılandırılmamış' }, 500)
+      return c.json({ error: 'PLATFORM_ESCROW_ADDRESS not configured' }, 500)
     }
 
     // Build the full program description with embedded policy metadata

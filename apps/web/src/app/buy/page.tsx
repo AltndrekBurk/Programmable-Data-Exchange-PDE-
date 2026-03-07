@@ -243,7 +243,7 @@ function BuyDataInner() {
     setError(null);
 
     try {
-      /* Step 1: Stake cüzi XLM via Freighter (on-chain program creation signal) */
+      /* Step 1: Stake minimal XLM via Freighter (on-chain program creation signal) */
       const StellarSdk = await import("@stellar/stellar-sdk");
       const mod = await import("@stellar/freighter-api");
       const freighterApi = (mod as Record<string, unknown>).freighterApi ?? mod;
@@ -1025,7 +1025,7 @@ function BuyDataInner() {
                 placeholder="age1... veya base64 public key"
               />
               <p className="mt-1 text-xs text-slate-500">
-                OpenClaw payloadı bu public key ile şifreler. Buyer callback private key ile çözer.
+                OpenClaw encrypts the payload with this public key. Buyer decrypts via callback private key.
               </p>
             </div>
           </div>

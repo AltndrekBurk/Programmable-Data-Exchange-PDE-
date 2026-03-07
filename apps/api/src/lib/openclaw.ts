@@ -84,16 +84,16 @@ export async function dispatchSkillToProviders(
     const ipfsLine = ipfsUrl ? `Skill JSON: ${ipfsUrl}\n` : ''
 
     const message =
-      `📊 *Yeni Veri Görevi*\n\n` +
-      `Görev: ${title}\n` +
-      `Veri kaynağı: ${dataSource}\n` +
-      `Ödül: ${rewardPerUser.toFixed(2)} USDC\n` +
+      `📊 *New Data Task*\n\n` +
+      `Task: ${title}\n` +
+      `Data source: ${dataSource}\n` +
+      `Reward: ${rewardPerUser.toFixed(2)} USDC\n` +
       `Skill ID: ${skillId.slice(0, 8)}...\n` +
       mcpLine +
       ipfsLine +
       `Proof submit: ${apiBase}/api/proofs/submit\n` +
-      `Not: proof body icinde *delivery.encryptedPayload* gonderin (buyer HTTPS callback teslimi icin).\n` +
-      `\nKabul etmek için *evet*, reddetmek için *hayır* yazın.`
+      `Note: include *delivery.encryptedPayload* in proof body (for buyer HTTPS callback delivery).\n` +
+      `\nReply *yes* to accept, *no* to decline.`
 
     const ok = await notifyViaOpenClaw({
       openclawUrl: botConfig.openclawUrl,
@@ -127,11 +127,11 @@ export async function notifyProofAccepted(
   if (!provider) return
 
   const message =
-    `✅ *Proof Onaylandı!*\n\n` +
+    `✅ *Proof Accepted!*\n\n` +
     `Skill: ${skillId.slice(0, 8)}...\n` +
     `Proof: ${proofHash.slice(0, 16)}...\n` +
-    `Kazancınız: ${providerShare.toFixed(4)} USDC\n\n` +
-    `Ödeme Stellar cüzdanınıza gönderildi.`
+    `Your earnings: ${providerShare.toFixed(4)} USDC\n\n` +
+    `Payment sent to your Stellar wallet.`
 
   await notifyViaOpenClaw({
     openclawUrl: botConfig.openclawUrl,

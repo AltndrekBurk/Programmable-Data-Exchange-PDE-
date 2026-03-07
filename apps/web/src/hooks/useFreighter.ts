@@ -118,7 +118,7 @@ export function useFreighter() {
           return null;
         }
 
-        // Backend base64 veya hex imzayı destekliyor; olduğu gibi geri dön.
+        // Backend accepts both base64 and hex signatures; return as-is.
         return sig;
       } catch (err) {
         const msg =

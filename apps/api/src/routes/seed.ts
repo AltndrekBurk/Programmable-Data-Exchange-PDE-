@@ -81,7 +81,7 @@ seedRouter.post('/', async (c) => {
   const skills = [
     {
       title: 'Saglik Verisi Toplama — Adim + Kalori',
-      description: 'Saglik arastirmasi icin 1000 kullanicidan 30 gunluk adim ve kalori verisi. Anonim, ZK kanıtlı.',
+      description: 'Health research: 30-day step and calorie data from 1000 users. Anonymous, ZK-proven.',
       dataSource: 'fitbit',
       metrics: ['steps', 'calories'],
       durationDays: 30,

@@ -47,7 +47,7 @@ function CreateSkillInner() {
     setError(null);
 
     if (!stellarAddress) {
-      setError("Freighter cüzdan bağlı değil.");
+      setError("Freighter wallet not connected.");
       setSubmitting(false);
       return;
     }

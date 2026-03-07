@@ -42,7 +42,7 @@ export function createProviderRouter(storage: StorageService) {
   router.post('/register', zValidator('json', registerSchema), async (c) => {
     const body = c.req.valid('json')
     const secret = process.env.PSEUDONYM_SECRET
-    if (!secret) return c.json({ error: 'PSEUDONYM_SECRET yapılandırılmamış' }, 500)
+    if (!secret) return c.json({ error: 'PSEUDONYM_SECRET not configured' }, 500)
     const pseudoId = generatePseudonym(secret, body.stellarAddress).pseudonym
 
     // Upload policy to IPFS if provided
@@ -114,7 +114,7 @@ export function createProviderRouter(storage: StorageService) {
     if (!address) return c.json({ error: 'address query param required' }, 400)
 
     const secret = process.env.PSEUDONYM_SECRET
-    if (!secret) return c.json({ error: 'PSEUDONYM_SECRET yapılandırılmamış' }, 500)
+    if (!secret) return c.json({ error: 'PSEUDONYM_SECRET not configured' }, 500)
     const pseudoId = generatePseudonym(secret, address).pseudonym
     const provider = await storage.getProvider(pseudoId)
 
@@ -132,7 +132,7 @@ export function createProviderRouter(storage: StorageService) {
   router.post('/bot-config', zValidator('json', botConfigSchema), async (c) => {
     const body = c.req.valid('json')
     const secret = process.env.PSEUDONYM_SECRET
-    if (!secret) return c.json({ error: 'PSEUDONYM_SECRET yapılandırılmamış' }, 500)
+    if (!secret) return c.json({ error: 'PSEUDONYM_SECRET not configured' }, 500)
     const pseudoId = generatePseudonym(secret, body.stellarAddress).pseudonym
 
     await storage.storeBotConfig({
@@ -160,7 +160,7 @@ export function createProviderRouter(storage: StorageService) {
   router.post('/policy', zValidator('json', providerPolicyUpdateSchema), async (c) => {
     const body = c.req.valid('json')
     const secret = process.env.PSEUDONYM_SECRET
-    if (!secret) return c.json({ error: 'PSEUDONYM_SECRET yapılandırılmamış' }, 500)
+    if (!secret) return c.json({ error: 'PSEUDONYM_SECRET not configured' }, 500)
     const pseudoId = generatePseudonym(secret, body.stellarAddress).pseudonym
 
     const provider = await storage.getProvider(pseudoId)
