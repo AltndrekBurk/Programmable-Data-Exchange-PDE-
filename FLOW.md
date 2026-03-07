@@ -1,53 +1,53 @@
 # dataEconomy — FLOW
-Son güncelleme: 2026-03-06 (v1.2)
+Last updated: 2026-03-06 (v1.2)
 
-## 1) Sistem Rolleri
+## 1) System Roles
 
-- **Buyer (Veri İsteyen):** Skill oluşturur veya marketplace MCP kullanır, escrow lock başlatır.
-- **Seller (Veri Sağlayıcı):** Görevi kabul eder, OpenClaw ile veri çeker/proof üretir.
-- **MCP Creator:** MCP standardı üretir, kullanıldıkça creator payı alır.
-- **Facilitator (Platform API):** Ham veriye dokunmadan policy, ödeme doğrulama ve teslimi orkestre eder.
-- **Stellar/Soroban:** Index + consent + escrow state + ödeme dağıtımı.
-- **IPFS (Pinata):** Skill/MCP/policy payload depolama.
+- **Buyer (Data Requester):** Creates a skill or uses a marketplace MCP, initiates escrow lock.
+- **Seller (Data Provider):** Accepts the task, fetches data and generates proof via OpenClaw.
+- **MCP Creator:** Publishes reusable data extraction standards, earns per-use creator fees.
+- **Facilitator (Platform API):** Orchestrates policy, payment verification, and delivery without touching raw data.
+- **Stellar/Soroban:** On-chain index + consent + escrow state + atomic payment distribution.
+- **IPFS (Pinata):** Skill/MCP/policy payload storage.
 
-## 2) Uçtan Uca Ana Akış
+## 2) End-to-End Main Flow
 
-1. Buyer frontend'de skill/policy doldurur.
-2. Frontend payload'ı Pinata HTTPS API ile IPFS'e yükler, CID alır.
-3. Frontend Freighter ile CID index bilgisini Stellar'a yazar.
-4. Frontend backend'e sadece `notify` ile `txHash/cid/address` bildirir.
-5. Seller UI/OpenClaw görevleri API'den alır; API yoksa chain+IPFS fallback ile okur.
-6. Seller kabul ettiğinde consent zincire yazılır.
-7. Buyer escrow lock işlemini kontrat üzerinden başlatır.
-8. OpenClaw veri toplar, proof üretir, şifreli payload hazırlar.
-9. `/api/proofs/submit` `x402` middleware doğrulamasından geçer.
-10. Facilitator proof/policy kontrollerini yapar, buyer callback'ine `encryptedPayload` forward eder.
-11. Escrow release kontrat çağrısıyla yapılır; gerekiyorsa MCP creator split kontrat içinde dağıtılır.
+1. Buyer fills out skill/policy form in the frontend.
+2. Frontend uploads payload to IPFS via Pinata HTTPS API, receives a CID.
+3. Frontend writes CID index to Stellar via Freighter wallet.
+4. Frontend notifies backend with `POST /api/notify` containing `txHash/cid/address`.
+5. Seller (via UI or OpenClaw) fetches tasks from API; falls back to chain+IPFS if API is unavailable.
+6. When the seller accepts, a consent transaction is written to Stellar.
+7. Buyer initiates escrow lock via the Soroban contract.
+8. OpenClaw collects data, generates ZK-TLS proof, and prepares encrypted payload.
+9. `POST /api/proofs/submit` passes through x402 middleware for payment verification.
+10. Facilitator runs proof/policy checks, forwards `encryptedPayload` to buyer's callback URL.
+11. Escrow release is executed via Soroban contract call; MCP creator split is distributed at contract level if applicable.
 
-## 3) Şifreli Teslim Modeli
+## 3) Encrypted Delivery Model
 
-- Skill metadata içinde `deliveryPublicKey` tutulur.
-- OpenClaw payload'ı buyer public key ile şifreler.
-- Facilitator sadece `encryptedPayload` + checksum taşır.
-- Buyer callback servisinde private key ile çözüm yapılır.
-- Integrity kontrolü: `checksum` + `proofHash`.
+- Skill metadata contains `deliveryPublicKey`.
+- OpenClaw encrypts the payload with the buyer's public key.
+- Facilitator only transports `encryptedPayload` + checksum (never sees plaintext).
+- Buyer decrypts with their private key at the callback service.
+- Integrity verification: `checksum` + `proofHash`.
 
-## 4) Ödeme ve Dağıtım
+## 4) Payment & Distribution
 
-- Spam/abuse önleme: `x402` ödeme başlığı doğrulaması.
-- Escrow release: provider/platform/dispute payları kontratta atomik dağıtılır.
-- MCP kullanılan işlerde creator payı da `release_with_mcp_fee` akışında kontrat seviyesinde dağılır.
+- Spam/abuse prevention: x402 payment header verification on proof submission.
+- Escrow release: provider/platform/dispute shares are distributed atomically in the contract.
+- For MCP-backed tasks, creator fee is also distributed at contract level via `release_with_mcp_fee`.
 
-## 5) Durum Özeti (MVP)
+## 5) Status Summary (MVP)
 
-### Tamamlanan
-- Frontend direct IPFS upload ve direct chain indexleme.
-- Backend facilitator-awareness `notify` modeli.
-- Proof submit için x402 middleware.
-- Escrow kontratında MCP creator split desteği.
-- Delivery key metadata taşıma ve encrypted relay pipeline.
+### Completed
+- Frontend direct IPFS upload and direct chain indexing.
+- Backend facilitator-awareness `notify` model.
+- x402 middleware on proof submission.
+- MCP creator split support in escrow contract.
+- Delivery key metadata transport and encrypted relay pipeline.
 
-### Devam Eden / Phase 2
-- Tam production-grade on-chain event stream otomasyonu (özellikle bot orchestration tarafında genişletme).
-- ZK-TLS attestor altyapısının tamamen gerçek üretim pipeline'ına taşınması.
-- Dispute/FHE tabanlı ileri hakemlik modeli.
+### In Progress / Phase 2
+- Full production-grade on-chain event stream automation (especially bot orchestration expansion).
+- ZK-TLS attestor infrastructure migration to real production pipeline.
+- Dispute/FHE-based advanced arbitration model.
