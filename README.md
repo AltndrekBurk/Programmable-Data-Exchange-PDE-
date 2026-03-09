@@ -30,6 +30,7 @@ The key innovation: **zero-knowledge TLS proofs** verify that data actually came
 │  Buyer: skill create → IPFS upload → Stellar index → notify backend  │
 │  Provider: accept task → consent TX (Freighter) → deliver proof      │
 │  MCP Creator: standard upload → IPFS → Stellar index → notify        │
+│  All reads: Horizon RPC + IPFS gateway (no backend in read path)     │
 └───────────────────────┬──────────────────────────────────────────────┘
                         │  notify only (txHash, CID)
                         ▼
@@ -38,18 +39,43 @@ The key innovation: **zero-knowledge TLS proofs** verify that data actually came
 │  - Verify TX on Horizon, update warm cache                           │
 │  - Dispatch tasks to matching providers (site + OpenClaw)            │
 │  - x402 payment verification on proof submit (0.01 USDC spam fee)    │
-│  - ZK proof validation (ed25519 witness signatures)                  │
+│  - verifyDataProof(): ed25519 sig check vs ATTESTOR_PUBLIC_KEYS      │
 │  - Encrypted payload relay to buyer callback                         │
 │  - Escrow lock/release via Soroban contract (platform keypair)       │
 │  - CID audit trail + platform mirror pinning                         │
 │  ⚠ NEVER stores raw data — awareness & orchestration only            │
-└──────────────────────────────────────────────────────────────────────┘
+└──────────────────────┬───────────────────────────────────────────────┘
+                       │
+    ┌──────────────────┴──────────────────────────────────────────────┐
+    │                                                                  │
+    ▼                                                                  ▼
+┌──────────────────────────────┐    ┌─────────────────────────────────┐
+│  Provider / OpenClaw Bot     │    │  Attestor-Core (self-hosted)    │
+│                              │    │                                 │
+│  - Accepts tasks via         │    │  - TLS witness on port 8001     │
+│    consent TX (Freighter)    │    │  - Opens own TLS to source API  │
+│  - Calls createApiProof()   │───>│  - Witnesses raw response       │
+│    which uses zkFetch()      │    │  - Signs sha256(claimData)      │
+│  - Encrypts payload with     │<───│    with ed25519 private key     │
+│    buyer's deliveryPublicKey │    │  - Returns ReclaimProof         │
+│  - Submits proof + payload   │    │  - NEVER stores raw data        │
+│    to POST /api/proofs/submit│    │                                 │
+└──────────────────────────────┘    └────────────────┬────────────────┘
+                                                     │
+                                                     │ TLS connection
+                                                     ▼
+                                    ┌─────────────────────────────────┐
+                                    │  Source APIs                    │
+                                    │  (Fitbit, Strava, Spotify,     │
+                                    │   GitHub, bank APIs, etc.)     │
+                                    └─────────────────────────────────┘
 ```
 
 ### Design Principles
 
-- **Frontend-first data plane:** IPFS uploads and Stellar CID indexing happen directly from the browser via Freighter wallet. The backend is never in the data path for publishing.
+- **Frontend-first dApp:** IPFS uploads and Stellar CID indexing happen directly from the browser via Freighter wallet. All reads go to Horizon RPC + IPFS gateway — backend is never in the read path.
 - **Backend = awareness + orchestration:** The API receives `notify` calls after the client has already written to IPFS + Stellar. It validates on Horizon, caches, dispatches to providers, and orchestrates escrow/proof flows.
+- **Self-hosted attestor-core:** The attestor independently opens TLS connections to source APIs and witnesses responses. The provider cannot forge data because the attestor signs what it sees — not what the provider claims.
 - **Escrow via API:** Escrow lock/release operations go through the API because they require the platform's Soroban keypair. The Soroban contract handles atomic fund distribution.
 - **Encrypted delivery:** Buyer's `deliveryPublicKey` is stored in skill metadata. The provider encrypts the payload with this key. The facilitator relays the ciphertext without ever seeing plaintext.
 - **Contract-level payments:** Escrow release, provider/platform/dispute splits, and MCP creator fees are all handled atomically inside the Soroban smart contract.
