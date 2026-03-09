@@ -227,7 +227,7 @@ export function createMarketplaceRouter(storage: StorageService) {
         console.log(`[marketplace] Volume on-chain: ${volumeValue} for ${id.slice(0, 8)} tx:${volumeTx}`);
       } catch (err) {
         if (isProd) {
-          return c.json({ error: "Volume index yazimi basarisiz" }, 502);
+          return c.json({ error: "Volume index write failed" }, 502);
         }
         console.warn("[marketplace] Volume index write failed (non-critical):", err);
       }

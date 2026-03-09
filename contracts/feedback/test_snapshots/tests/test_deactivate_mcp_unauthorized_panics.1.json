@@ -1,6 +1,6 @@
 {
   "generators": {
-    "address": 5,
+    "address": 6,
     "nonce": 0
   },
   "auth": [
@@ -109,16 +109,16 @@
               "function_name": "register_mcp",
               "args": [
                 {
-                  "string": "mcp-003"
+                  "string": "mcp-unauth-deact"
                 },
                 {
                   "address": "CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAITA4"
                 },
                 {
-                  "string": "QmTestHash789"
+                  "string": "QmUnauth"
                 },
                 {
-                  "address": "CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAK3IM"
+                  "address": "CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAMDR4"
                 },
                 {
                   "i128": {
@@ -249,7 +249,7 @@
                   "symbol": "Mcp"
                 },
                 {
-                  "string": "mcp-003"
+                  "string": "mcp-unauth-deact"
                 }
               ]
             },
@@ -269,7 +269,7 @@
                       "symbol": "Mcp"
                     },
                     {
-                      "string": "mcp-003"
+                      "string": "mcp-unauth-deact"
                     }
                   ]
                 },
@@ -297,7 +297,7 @@
                         "symbol": "ipfs_hash"
                       },
                       "val": {
-                        "string": "QmTestHash789"
+                        "string": "QmUnauth"
                       }
                     },
                     {
@@ -329,7 +329,7 @@
                         "symbol": "token"
                       },
                       "val": {
-                        "address": "CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAK3IM"
+                        "address": "CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAMDR4"
                       }
                     },
                     {
@@ -418,7 +418,7 @@
                   "symbol": "TotalPaid"
                 },
                 {
-                  "string": "mcp-003"
+                  "string": "mcp-unauth-deact"
                 }
               ]
             },
@@ -438,7 +438,7 @@
                       "symbol": "TotalPaid"
                     },
                     {
-                      "string": "mcp-003"
+                      "string": "mcp-unauth-deact"
                     }
                   ]
                 },

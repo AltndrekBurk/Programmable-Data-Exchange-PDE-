@@ -95,6 +95,14 @@ export default function DashboardPage() {
   const [loading, setLoading] = useState(true);
   const [chainError, setChainError] = useState<string | null>(null);
 
+  /* Escrow event stream */
+  const [escrowEvents, setEscrowEvents] = useState<Array<{
+    type: string;
+    escrowId: string;
+    timestamp: string;
+    detail?: string;
+  }>>([]);
+
   /* Bot config */
   const [showBotSetup, setShowBotSetup] = useState(false);
   const [botUrl, setBotUrl] = useState("");
@@ -137,6 +145,48 @@ export default function DashboardPage() {
       .catch((err) => setChainError(err.message))
       .finally(() => setLoading(false));
   }, [status, stellarAddress]);
+
+  /* ── Derive escrow events from chain state ── */
+  useEffect(() => {
+    if (!chainState?.userEscrows?.length) return;
+    const events = chainState.userEscrows
+      .map((e) => {
+        const evts = [];
+        evts.push({
+          type: "deposited",
+          escrowId: e.key,
+          timestamp: "",
+          detail: `${e.totalBudget || 0} USDC locked`,
+        });
+        if (e.status === "released") {
+          evts.push({
+            type: "released",
+            escrowId: e.key,
+            timestamp: "",
+            detail: `${e.released || 0} USDC released (70/20/10)`,
+          });
+        }
+        if (e.status === "disputed") {
+          evts.push({
+            type: "disputed",
+            escrowId: e.key,
+            timestamp: "",
+            detail: "Escrow under dispute",
+          });
+        }
+        if (e.status === "refunded") {
+          evts.push({
+            type: "refunded",
+            escrowId: e.key,
+            timestamp: "",
+            detail: `${e.totalBudget || 0} USDC refunded`,
+          });
+        }
+        return evts;
+      })
+      .flat();
+    setEscrowEvents(events);
+  }, [chainState]);
 
   /* ── Consent decision ── */
   const handleConsent = async (skillId: string, decision: "ACCEPT" | "REJECT") => {
@@ -697,6 +747,46 @@ export default function DashboardPage() {
           )}
         </div>
       </div>
+
+      {/* ── Escrow Event Stream ── */}
+      {escrowEvents.length > 0 && (
+        <div className="flow-surface rounded-xl">
+          <div className="border-b border-slate-800 px-4 py-3">
+            <h2 className="text-sm font-semibold uppercase tracking-wide text-emerald-300">
+              Escrow Event Stream
+            </h2>
+            <p className="text-[10px] text-slate-500 mt-0.5">
+              State transitions from Soroban escrow contract
+            </p>
+          </div>
+          <div className="divide-y divide-slate-800">
+            {escrowEvents.slice(0, 10).map((evt, i) => (
+              <div key={`${evt.escrowId}-${evt.type}-${i}`} className="flex items-center gap-3 px-4 py-2.5">
+                <span
+                  className={`h-2 w-2 shrink-0 rounded-full ${
+                    evt.type === "deposited"
+                      ? "bg-blue-400"
+                      : evt.type === "released"
+                        ? "bg-emerald-400"
+                        : evt.type === "disputed"
+                          ? "bg-amber-400"
+                          : "bg-slate-400"
+                  }`}
+                />
+                <div className="min-w-0 flex-1">
+                  <span className="text-xs font-medium text-slate-200">
+                    {evt.type.charAt(0).toUpperCase() + evt.type.slice(1)}
+                  </span>
+                  <span className="ml-2 text-[10px] text-slate-500 font-mono">
+                    {evt.escrowId.slice(0, 12)}...
+                  </span>
+                </div>
+                <span className="text-[10px] text-slate-500 shrink-0">{evt.detail}</span>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
 
       {/* ── On-chain summary ── */}
       {cs?.summary && (

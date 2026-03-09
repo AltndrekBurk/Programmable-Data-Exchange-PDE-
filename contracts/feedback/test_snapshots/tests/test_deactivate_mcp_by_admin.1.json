@@ -109,13 +109,13 @@
               "function_name": "register_mcp",
               "args": [
                 {
-                  "string": "mcp-003"
+                  "string": "mcp-admin-deact"
                 },
                 {
                   "address": "CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAITA4"
                 },
                 {
-                  "string": "QmTestHash789"
+                  "string": "QmAdminDeact"
                 },
                 {
                   "address": "CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAK3IM"
@@ -125,6 +125,28 @@
                     "hi": 0,
                     "lo": 0
                   }
+                }
+              ]
+            }
+          },
+          "sub_invocations": []
+        }
+      ]
+    ],
+    [
+      [
+        "CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAD2KM",
+        {
+          "function": {
+            "contract_fn": {
+              "contract_address": "CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAFCT4",
+              "function_name": "deactivate_mcp",
+              "args": [
+                {
+                  "address": "CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAD2KM"
+                },
+                {
+                  "string": "mcp-admin-deact"
                 }
               ]
             }
@@ -212,6 +234,39 @@
             "contract": "CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAD2KM",
             "key": {
               "ledger_key_nonce": {
+                "nonce": 2032731177588607455
+              }
+            },
+            "durability": "temporary"
+          }
+        },
+        [
+          {
+            "last_modified_ledger_seq": 0,
+            "data": {
+              "contract_data": {
+                "ext": "v0",
+                "contract": "CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAD2KM",
+                "key": {
+                  "ledger_key_nonce": {
+                    "nonce": 2032731177588607455
+                  }
+                },
+                "durability": "temporary",
+                "val": "void"
+              }
+            },
+            "ext": "v0"
+          },
+          6311999
+        ]
+      ],
+      [
+        {
+          "contract_data": {
+            "contract": "CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAD2KM",
+            "key": {
+              "ledger_key_nonce": {
                 "nonce": 5541220902715666415
               }
             },
@@ -249,7 +304,7 @@
                   "symbol": "Mcp"
                 },
                 {
-                  "string": "mcp-003"
+                  "string": "mcp-admin-deact"
                 }
               ]
             },
@@ -269,7 +324,7 @@
                       "symbol": "Mcp"
                     },
                     {
-                      "string": "mcp-003"
+                      "string": "mcp-admin-deact"
                     }
                   ]
                 },
@@ -281,7 +336,7 @@
                         "symbol": "active"
                       },
                       "val": {
-                        "bool": true
+                        "bool": false
                       }
                     },
                     {
@@ -297,7 +352,7 @@
                         "symbol": "ipfs_hash"
                       },
                       "val": {
-                        "string": "QmTestHash789"
+                        "string": "QmAdminDeact"
                       }
                     },
                     {
@@ -418,7 +473,7 @@
                   "symbol": "TotalPaid"
                 },
                 {
-                  "string": "mcp-003"
+                  "string": "mcp-admin-deact"
                 }
               ]
             },
@@ -438,7 +493,7 @@
                       "symbol": "TotalPaid"
                     },
                     {
-                      "string": "mcp-003"
+                      "string": "mcp-admin-deact"
                     }
                   ]
                 },

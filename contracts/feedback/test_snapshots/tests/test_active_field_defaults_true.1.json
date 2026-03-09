@@ -109,13 +109,13 @@
               "function_name": "register_mcp",
               "args": [
                 {
-                  "string": "mcp-003"
+                  "string": "mcp-active-check"
                 },
                 {
                   "address": "CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAITA4"
                 },
                 {
-                  "string": "QmTestHash789"
+                  "string": "QmActiveCheck"
                 },
                 {
                   "address": "CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAK3IM"
@@ -249,7 +249,7 @@
                   "symbol": "Mcp"
                 },
                 {
-                  "string": "mcp-003"
+                  "string": "mcp-active-check"
                 }
               ]
             },
@@ -269,7 +269,7 @@
                       "symbol": "Mcp"
                     },
                     {
-                      "string": "mcp-003"
+                      "string": "mcp-active-check"
                     }
                   ]
                 },
@@ -297,7 +297,7 @@
                         "symbol": "ipfs_hash"
                       },
                       "val": {
-                        "string": "QmTestHash789"
+                        "string": "QmActiveCheck"
                       }
                     },
                     {
@@ -418,7 +418,7 @@
                   "symbol": "TotalPaid"
                 },
                 {
-                  "string": "mcp-003"
+                  "string": "mcp-active-check"
                 }
               ]
             },
@@ -438,7 +438,7 @@
                       "symbol": "TotalPaid"
                     },
                     {
-                      "string": "mcp-003"
+                      "string": "mcp-active-check"
                     }
                   ]
                 },

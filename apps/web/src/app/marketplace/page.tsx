@@ -1,9 +1,9 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useState, useMemo } from "react";
 import Link from "next/link";
 import { fetchFromIpfs } from "@/lib/ipfs";
-import { listEntityEntriesFromAccount } from "@/lib/stellar";
+import { listEntityEntriesFromAccount, readAccountData } from "@/lib/stellar";
 
 interface McpStandard {
   id: string;
@@ -23,6 +23,8 @@ interface McpStandard {
   ipfsHash: string;
 }
 
+type SortOption = "volume-desc" | "volume-asc" | "usage-desc" | "rating-desc" | "newest";
+
 export default function MarketplacePage() {
   const [standards, setStandards] = useState<McpStandard[]>([]);
   const [chainTotalVolume, setChainTotalVolume] = useState<number | null>(null);
@@ -32,6 +34,7 @@ export default function MarketplacePage() {
   const [proofFilter, setProofFilter] = useState("all");
   const [freshnessFilter, setFreshnessFilter] = useState("all");
   const [witnessFilter, setWitnessFilter] = useState("all");
+  const [sortBy, setSortBy] = useState<SortOption>("volume-desc");
 
   useEffect(() => {
     const platformAddress = process.env.NEXT_PUBLIC_STELLAR_PLATFORM_PUBLIC;
@@ -42,12 +45,35 @@ export default function MarketplacePage() {
       return;
     }
 
-    listEntityEntriesFromAccount(platformAddress, "mcp")
-      .then(async (entries) => {
+    (async () => {
+      try {
+        // 1. Read all manage_data from the platform account
+        const accountData = await readAccountData(platformAddress);
+
+        // 2. Extract MCP index entries (mc:... → IPFS CID)
+        const mcpEntries: { id: string; ipfsHash: string }[] = [];
+        const volumeMap = new Map<string, number>();
+
+        for (const [key, value] of accountData.entries()) {
+          if (key.startsWith("mc:") && value) {
+            mcpEntries.push({ id: key.slice(3), ipfsHash: value });
+          }
+          // On-chain volume entries (mv:... → "1.2345 USDC")
+          if (key.startsWith("mv:") && value) {
+            const parsed = parseFloat(value);
+            if (Number.isFinite(parsed)) {
+              volumeMap.set(key.slice(3), parsed);
+            }
+          }
+        }
+
+        // 3. Fetch IPFS metadata for each MCP
         const onChain = await Promise.all(
-          entries.map(async (entry) => {
+          mcpEntries.map(async (entry) => {
             try {
               const item = await fetchFromIpfs<Partial<McpStandard> & { id?: string }>(entry.ipfsHash);
+              // Merge on-chain volume (mv: key uses first 24 chars of id)
+              const chainVolume = volumeMap.get(entry.id.slice(0, 24));
               return {
                 id: item.id || entry.id,
                 title: item.title || "Untitled MCP",
@@ -56,7 +82,7 @@ export default function MarketplacePage() {
                 metrics: item.metrics || [],
                 creator: item.creator || "unknown",
                 usageCount: item.usageCount || 0,
-                volume: item.volume || 0,
+                volume: chainVolume ?? item.volume ?? 0,
                 proofType: item.proofType || "zk-tls",
                 freshnessSlaHours: item.freshnessSlaHours || 24,
                 minWitnessCount: item.minWitnessCount || 1,
@@ -71,32 +97,55 @@ export default function MarketplacePage() {
           })
         );
 
-        const standards = onChain.filter((s): s is McpStandard => s !== null);
-        setStandards(standards);
-        setChainTotalVolume(standards.reduce((sum, s) => sum + (s.volume || 0), 0));
-      })
-      .catch(() => {
+        const results = onChain.filter((s): s is McpStandard => s !== null);
+        setStandards(results);
+        setChainTotalVolume(results.reduce((sum, s) => sum + (s.volume || 0), 0));
+      } catch {
         setStandards([]);
         setChainTotalVolume(null);
-      })
-      .finally(() => setLoading(false));
+      } finally {
+        setLoading(false);
+      }
+    })();
   }, []);
 
-  const filtered = standards.filter((s) => {
-    const matchSearch =
-      !search ||
-      s.title.toLowerCase().includes(search.toLowerCase()) ||
-      s.description.toLowerCase().includes(search.toLowerCase());
-    const matchSource = sourceFilter === "all" || s.dataSource === sourceFilter;
-    const matchProof = proofFilter === "all" || (s.proofType || "zk-tls") === proofFilter;
-    const freshness = s.freshnessSlaHours ?? 24;
-    const matchFreshness =
-      freshnessFilter === "all" || freshness <= Number(freshnessFilter);
-    const witnesses = s.minWitnessCount ?? 1;
-    const matchWitness =
-      witnessFilter === "all" || witnesses >= Number(witnessFilter);
-    return matchSearch && matchSource && matchProof && matchFreshness && matchWitness;
-  });
+  // Filter
+  const filtered = useMemo(() => {
+    return standards.filter((s) => {
+      const matchSearch =
+        !search ||
+        s.title.toLowerCase().includes(search.toLowerCase()) ||
+        s.description.toLowerCase().includes(search.toLowerCase());
+      const matchSource = sourceFilter === "all" || s.dataSource === sourceFilter;
+      const matchProof = proofFilter === "all" || (s.proofType || "zk-tls") === proofFilter;
+      const freshness = s.freshnessSlaHours ?? 24;
+      const matchFreshness =
+        freshnessFilter === "all" || freshness <= Number(freshnessFilter);
+      const witnesses = s.minWitnessCount ?? 1;
+      const matchWitness =
+        witnessFilter === "all" || witnesses >= Number(witnessFilter);
+      return matchSearch && matchSource && matchProof && matchFreshness && matchWitness;
+    });
+  }, [standards, search, sourceFilter, proofFilter, freshnessFilter, witnessFilter]);
+
+  // Sort
+  const sorted = useMemo(() => {
+    const arr = [...filtered];
+    switch (sortBy) {
+      case "volume-desc":
+        return arr.sort((a, b) => (b.volume ?? 0) - (a.volume ?? 0));
+      case "volume-asc":
+        return arr.sort((a, b) => (a.volume ?? 0) - (b.volume ?? 0));
+      case "usage-desc":
+        return arr.sort((a, b) => b.usageCount - a.usageCount);
+      case "rating-desc":
+        return arr.sort((a, b) => (b.rating ?? 0) - (a.rating ?? 0));
+      case "newest":
+        return arr.reverse();
+      default:
+        return arr;
+    }
+  }, [filtered, sortBy]);
 
   const sources = [...new Set(standards.map((s) => s.dataSource))];
   const totalVolume =
@@ -114,7 +163,7 @@ export default function MarketplacePage() {
           <span className="flow-badge">Buy Data</span>
           <h1 className="mt-3 text-3xl font-bold text-slate-100">MCP Marketplace</h1>
           <p className="mt-2 text-sm text-slate-400">
-            Compare MCP standards with real operational metadata: on-chain volume, proof type, witness threshold, and freshness SLA.
+            On-chain MCP standards with real-time volume from Stellar and metadata from IPFS.
           </p>
         </div>
         <Link
@@ -125,9 +174,10 @@ export default function MarketplacePage() {
         </Link>
       </div>
 
+      {/* Stats */}
       <div className="mb-6 grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
         <div className="flow-surface rounded-lg px-4 py-3">
-          <p className="text-xs uppercase tracking-wide text-slate-500">Verified Volume</p>
+          <p className="text-xs uppercase tracking-wide text-slate-500">On-chain Volume</p>
           <p className="mt-1 text-2xl font-bold text-emerald-300">{totalVolume.toFixed(2)} USDC</p>
         </div>
         <div className="flow-surface rounded-lg px-4 py-3">
@@ -144,7 +194,8 @@ export default function MarketplacePage() {
         </div>
       </div>
 
-      <div className="flow-surface mb-6 grid gap-3 rounded-xl p-4 md:grid-cols-2 lg:grid-cols-5">
+      {/* Filters + Sort */}
+      <div className="flow-surface mb-6 grid gap-3 rounded-xl p-4 md:grid-cols-2 lg:grid-cols-6">
         <input
           type="text"
           placeholder="Search standards..."
@@ -165,26 +216,34 @@ export default function MarketplacePage() {
           <option value="hybrid">Hybrid</option>
         </select>
         <select value={freshnessFilter} onChange={(e) => setFreshnessFilter(e.target.value)} className="flow-input">
-          <option value="all">Freshness SLA: All</option>
-          <option value="24">≤ 24h</option>
-          <option value="72">≤ 72h</option>
-          <option value="168">≤ 7d</option>
+          <option value="all">Freshness: All</option>
+          <option value="24">&le; 24h</option>
+          <option value="72">&le; 72h</option>
+          <option value="168">&le; 7d</option>
         </select>
         <select value={witnessFilter} onChange={(e) => setWitnessFilter(e.target.value)} className="flow-input">
-          <option value="all">Witness Min: All</option>
-          <option value="1">≥ 1</option>
-          <option value="2">≥ 2</option>
-          <option value="3">≥ 3</option>
+          <option value="all">Witness: All</option>
+          <option value="1">&ge; 1</option>
+          <option value="2">&ge; 2</option>
+          <option value="3">&ge; 3</option>
+        </select>
+        <select value={sortBy} onChange={(e) => setSortBy(e.target.value as SortOption)} className="flow-input">
+          <option value="volume-desc">Sort: Volume (High)</option>
+          <option value="volume-asc">Sort: Volume (Low)</option>
+          <option value="usage-desc">Sort: Most Used</option>
+          <option value="rating-desc">Sort: Top Rated</option>
+          <option value="newest">Sort: Newest</option>
         </select>
       </div>
 
+      {/* Results */}
       {loading ? (
         <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-3">
           {[1, 2, 3, 4, 5, 6].map((i) => (
             <div key={i} className="animate-pulse h-52 rounded-lg bg-slate-900" />
           ))}
         </div>
-      ) : filtered.length === 0 ? (
+      ) : sorted.length === 0 ? (
         <div className="flow-surface rounded-xl py-16 text-center">
           <p className="text-slate-400">
             {standards.length === 0
@@ -194,7 +253,7 @@ export default function MarketplacePage() {
         </div>
       ) : (
         <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-3">
-          {filtered.map((standard) => (
+          {sorted.map((standard) => (
             <Link
               key={standard.id}
               href={`/marketplace/${standard.id}`}

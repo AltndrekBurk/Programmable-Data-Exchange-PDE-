@@ -40,7 +40,7 @@ export class StorageService {
       throw new Error('[storage] Invalid STELLAR_PLATFORM_SECRET')
     }
 
-    console.log('[storage] Mode: ipfs+stellar (memory simulation devre dışı)')
+    console.log('[storage] Mode: ipfs+stellar (memory simulation disabled)')
   }
 
   // =========================================================================
@@ -124,7 +124,7 @@ export class StorageService {
   // =========================================================================
 
   async storeBotConfig(config: StoredBotConfig): Promise<void> {
-    // Bot config'ler hassas; yine de simülasyon yok, doğrudan IPFS + Stellar'a yaz
+    // Bot configs are sensitive; write directly to IPFS + Stellar
     await this.storeToIpfsAndStellar('botconfig', config.pseudoId, config)
   }
 

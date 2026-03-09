@@ -67,7 +67,7 @@ export interface StoredMcpStandard {
   dataRetentionDays?: number
   /** Whether explicit on-chain consent is mandatory */
   requiresConsentTx?: boolean
-  /** Gelişmiş/özel MCP ayarları — serbest metin/string */
+  /** Advanced/custom MCP settings — free-form string */
   advancedConfig?: string
   rating: number
   ratingCount: number
@@ -128,7 +128,7 @@ export interface StoredProvider {
   pseudoId: string
   stellarAddress: string
   dataSources: string[]
-  /** Serbest metin: hangi veri türlerini / kaynakları hangi politikalarla sağladığı */
+  /** Free-text description of supported data types/sources and policies */
   supportedDataDescription: string
   openclawUrl?: string
   channel: 'whatsapp' | 'telegram' | 'discord'

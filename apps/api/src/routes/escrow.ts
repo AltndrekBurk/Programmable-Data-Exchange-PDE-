@@ -35,7 +35,7 @@ export function createEscrowRouter(escrow: EscrowAdapter) {
       skillId: body.skillId,
       amount: body.amount,
       txHash: record.txHash,
-      note: 'USDC escrow kilitlendi',
+      note: 'USDC escrow locked',
     }, 201)
   })
 
@@ -144,7 +144,7 @@ export function createEscrowRouter(escrow: EscrowAdapter) {
   router.get('/:id', async (c) => {
     const id = c.req.param('id')
     const record = await escrow.getEscrow(id)
-    if (!record) return c.json({ error: 'Escrow bulunamadi' }, 404)
+    if (!record) return c.json({ error: 'Escrow not found' }, 404)
     return c.json(record)
   })
 

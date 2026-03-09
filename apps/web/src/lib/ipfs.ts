@@ -1,8 +1,11 @@
 // ---------------------------------------------------------------------------
 // Client-side IPFS upload via Pinata
 //
-// Uses NEXT_PUBLIC_PINATA_API_KEY + NEXT_PUBLIC_PINATA_API_SECRET
-// These are upload-only keys — safe to expose in the browser.
+// Supports two modes:
+//   1. Platform keys: NEXT_PUBLIC_PINATA_API_KEY (upload-only, safe to expose)
+//   2. Per-user keys: User provides their own Pinata JWT or API key/secret
+//
+// Users can also bring their own CID (uploaded via their own IPFS tool).
 // ---------------------------------------------------------------------------
 
 const PINATA_API_URL = "https://api.pinata.cloud/pinning/pinJSONToIPFS";
@@ -20,19 +23,51 @@ export interface PinataMetadata {
   keyvalues?: Record<string, string>;
 }
 
+export interface UserIpfsCredentials {
+  /** Pinata JWT token (preferred) */
+  jwt?: string;
+  /** Pinata API key (alternative to JWT) */
+  apiKey?: string;
+  /** Pinata API secret (required with apiKey) */
+  apiSecret?: string;
+}
+
 /**
  * Upload any JSON to IPFS via Pinata (client-side).
  * Returns the IPFS CID (v0 hash, "Qm..." prefix).
+ *
+ * If userCredentials is provided, uses the user's own Pinata account.
+ * Otherwise falls back to platform keys.
  */
 export async function uploadJsonToIpfs(
   data: unknown,
-  metadata: PinataMetadata
+  metadata: PinataMetadata,
+  userCredentials?: UserIpfsCredentials
 ): Promise<string> {
-  const apiKey = process.env.NEXT_PUBLIC_PINATA_API_KEY;
-  const apiSecret = process.env.NEXT_PUBLIC_PINATA_API_SECRET;
+  const headers: Record<string, string> = {
+    "Content-Type": "application/json",
+  };
 
-  if (!apiKey || !apiSecret) {
-    throw new Error("Pinata API key not configured (NEXT_PUBLIC_PINATA_API_KEY)");
+  if (userCredentials?.jwt) {
+    // User's own Pinata JWT
+    headers["Authorization"] = `Bearer ${userCredentials.jwt}`;
+  } else if (userCredentials?.apiKey && userCredentials?.apiSecret) {
+    // User's own Pinata API key/secret
+    headers["pinata_api_key"] = userCredentials.apiKey;
+    headers["pinata_secret_api_key"] = userCredentials.apiSecret;
+  } else {
+    // Platform keys (fallback)
+    const apiKey = process.env.NEXT_PUBLIC_PINATA_API_KEY;
+    const apiSecret = process.env.NEXT_PUBLIC_PINATA_API_SECRET;
+
+    if (!apiKey || !apiSecret) {
+      throw new Error(
+        "No IPFS credentials available. Provide your own Pinata credentials or set NEXT_PUBLIC_PINATA_API_KEY."
+      );
+    }
+
+    headers["pinata_api_key"] = apiKey;
+    headers["pinata_secret_api_key"] = apiSecret;
   }
 
   const body = JSON.stringify({
@@ -46,11 +81,7 @@ export async function uploadJsonToIpfs(
 
   const response = await fetch(PINATA_API_URL, {
     method: "POST",
-    headers: {
-      "Content-Type": "application/json",
-      pinata_api_key: apiKey,
-      pinata_secret_api_key: apiSecret,
-    },
+    headers,
     body,
   });
 
@@ -61,6 +92,23 @@ export async function uploadJsonToIpfs(
 
   const result = (await response.json()) as PinataUploadResponse;
   return result.IpfsHash;
+}
+
+/**
+ * Verify a CID exists on IPFS (for "bring your own CID" mode).
+ * Users upload via their own tools, then provide the CID to the platform.
+ */
+export async function verifyCidExists(cid: string): Promise<boolean> {
+  try {
+    const url = `${PINATA_GATEWAY}/ipfs/${cid}`;
+    const response = await fetch(url, {
+      method: "HEAD",
+      signal: AbortSignal.timeout(10000),
+    });
+    return response.ok;
+  } catch {
+    return false;
+  }
 }
 
 /**

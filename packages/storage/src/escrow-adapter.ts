@@ -173,8 +173,8 @@ class SorobanEscrowAdapter implements EscrowAdapter {
 
   async release(params: ReleaseParams): Promise<EscrowRecord> {
     const record = await this.storage.getEscrow(params.escrowId)
-    if (!record) throw new Error('Escrow bulunamadi')
-    if (record.status !== 'locked') throw new Error(`Escrow zaten ${record.status}`)
+    if (!record) throw new Error('Escrow not found')
+    if (record.status !== 'locked') throw new Error(`Escrow already ${record.status}`)
 
     let releaseTxHash: string | undefined
     try {
@@ -226,8 +226,8 @@ class SorobanEscrowAdapter implements EscrowAdapter {
 
   async dispute(escrowId: string, _reason: string): Promise<EscrowRecord> {
     const record = await this.storage.getEscrow(escrowId)
-    if (!record) throw new Error('Escrow bulunamadi')
-    if (record.status !== 'locked') throw new Error('Sadece kilitli escrow itiraz edilebilir')
+    if (!record) throw new Error('Escrow not found')
+    if (record.status !== 'locked') throw new Error('Only locked escrows can be disputed')
 
     try {
       const escrowIdClean = escrowId.replace(/-/g, '').slice(0, 32)
@@ -254,9 +254,9 @@ class SorobanEscrowAdapter implements EscrowAdapter {
 
   async refund(escrowId: string): Promise<EscrowRecord> {
     const record = await this.storage.getEscrow(escrowId)
-    if (!record) throw new Error('Escrow bulunamadi')
+    if (!record) throw new Error('Escrow not found')
     if (record.status !== 'locked' && record.status !== 'disputed') {
-      throw new Error('Sadece kilitli/ihtilaflı escrow iade edilebilir')
+      throw new Error('Only locked or disputed escrows can be refunded')
     }
 
     let refundTxHash: string | undefined

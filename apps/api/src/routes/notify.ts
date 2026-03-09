@@ -18,6 +18,69 @@ import { dispatchSkillToProviders } from '../lib/openclaw.js'
 
 const HORIZON_URL = 'https://horizon-testnet.stellar.org'
 
+// ---------------------------------------------------------------------------
+// CID Audit Trail — logs CID changes for future chain recording
+// ---------------------------------------------------------------------------
+
+interface CidChangeRecord {
+  entityType: 'mcp' | 'skill' | 'provider'
+  entityId: string
+  oldCid: string
+  newCid: string
+  changedAt: string
+  changedBy: string
+}
+
+/** In-memory CID change log (for later chain recording via feedback contract) */
+const cidChangeLog: CidChangeRecord[] = []
+
+function logCidChange(
+  entityType: 'mcp' | 'skill' | 'provider',
+  entityId: string,
+  oldCid: string,
+  newCid: string,
+  changedBy: string
+) {
+  if (oldCid === newCid) return
+  const record: CidChangeRecord = {
+    entityType,
+    entityId,
+    oldCid,
+    newCid,
+    changedAt: new Date().toISOString(),
+    changedBy,
+  }
+  cidChangeLog.push(record)
+  console.log(
+    `[cid-audit] ${entityType} ${entityId.slice(0, 8)} CID changed: ${oldCid.slice(0, 12)} → ${newCid.slice(0, 12)}`
+  )
+}
+
+// ---------------------------------------------------------------------------
+// Platform mirror pinning — pin every CID to platform Pinata (fire-and-forget)
+// ---------------------------------------------------------------------------
+
+async function mirrorPinCid(cid: string, name: string) {
+  const jwt = process.env.PINATA_JWT
+  if (!jwt) return
+
+  try {
+    await fetch('https://api.pinata.cloud/pinning/pinByHash', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        Authorization: `Bearer ${jwt}`,
+      },
+      body: JSON.stringify({
+        hashToPin: cid,
+        pinataMetadata: { name: `mirror:${name}` },
+      }),
+    })
+  } catch (err) {
+    console.warn(`[mirror] Failed to pin ${cid.slice(0, 12)}:`, err)
+  }
+}
+
 /**
  * Verify a TX hash exists on Horizon and was submitted by the claimed source.
  * Returns the TX record or null if invalid.
@@ -108,8 +171,17 @@ export function createNotifyRouter(storage: StorageService) {
       createdAt: new Date().toISOString(),
     }
 
+    // CID audit trail — check if this is an update
+    const existingMcp = await storage.getMcp(body.id).catch(() => null)
+    if (existingMcp?.ipfsHash && existingMcp.ipfsHash !== body.ipfsHash) {
+      logCidChange('mcp', body.id, existingMcp.ipfsHash, body.ipfsHash, body.stellarAddress)
+    }
+
     // Direct cache update via storeFromNotify (bypasses IPFS+Stellar write)
     await storage.cacheOnly('mcp', body.id, body.ipfsHash, mcp)
+
+    // Platform mirror pin (fire-and-forget)
+    mirrorPinCid(body.ipfsHash, `mcp:${body.id}`).catch(() => {})
 
     console.log(`[notify] MCP ${body.id.slice(0, 8)} registered — CID:${body.ipfsHash.slice(0, 12)} TX:${body.txHash.slice(0, 12)}`)
 
@@ -118,6 +190,7 @@ export function createNotifyRouter(storage: StorageService) {
       id: body.id,
       ipfsHash: body.ipfsHash,
       txHash: body.txHash,
+      cidChanged: existingMcp?.ipfsHash ? existingMcp.ipfsHash !== body.ipfsHash : false,
     })
   })
 
@@ -172,7 +245,16 @@ export function createNotifyRouter(storage: StorageService) {
       status: 'active' as const,
     }
 
+    // CID audit trail
+    const existingSkill = await storage.getSkill(body.skillId).catch(() => null)
+    if (existingSkill?.ipfsHash && existingSkill.ipfsHash !== body.ipfsHash) {
+      logCidChange('skill', body.skillId, existingSkill.ipfsHash, body.ipfsHash, body.stellarAddress)
+    }
+
     await storage.cacheOnly('skill', body.skillId, body.ipfsHash, skill)
+
+    // Platform mirror pin (fire-and-forget)
+    mirrorPinCid(body.ipfsHash, `skill:${body.skillId}`).catch(() => {})
 
     // Dispatch to matching providers via OpenClaw (fire-and-forget)
     dispatchSkillToProviders(
@@ -242,7 +324,16 @@ export function createNotifyRouter(storage: StorageService) {
       ipfsHash: body.ipfsHash,
     }
 
+    // CID audit trail
+    const existingProvider = await storage.getProvider(pseudoId).catch(() => null)
+    if (existingProvider?.ipfsHash && existingProvider.ipfsHash !== body.ipfsHash) {
+      logCidChange('provider', pseudoId, existingProvider.ipfsHash, body.ipfsHash, body.stellarAddress)
+    }
+
     await storage.cacheOnly('provider', pseudoId, body.ipfsHash, provider)
+
+    // Platform mirror pin (fire-and-forget)
+    mirrorPinCid(body.ipfsHash, `provider:${pseudoId}`).catch(() => {})
 
     console.log(`[notify] Provider ${pseudoId.slice(0, 8)} registered — TX:${body.txHash.slice(0, 12)}`)
 
@@ -295,6 +386,27 @@ export function createNotifyRouter(storage: StorageService) {
       pseudoId,
       policyCid: body.ipfsHash,
       txHash: body.txHash,
+    })
+  })
+
+  // -----------------------------------------------------------------------
+  // GET /api/notify/cid-audit — CID change audit log
+  // -----------------------------------------------------------------------
+  router.get('/cid-audit', async (c) => {
+    const entityType = c.req.query('type')
+    const entityId = c.req.query('id')
+
+    let filtered = cidChangeLog
+    if (entityType) {
+      filtered = filtered.filter((r) => r.entityType === entityType)
+    }
+    if (entityId) {
+      filtered = filtered.filter((r) => r.entityId === entityId)
+    }
+
+    return c.json({
+      changes: filtered,
+      total: filtered.length,
     })
   })
 

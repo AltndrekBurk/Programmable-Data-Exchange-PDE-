@@ -60,7 +60,7 @@ export function createProofsRouter(storage: StorageService, escrow: EscrowAdapte
     const body = c.req.valid('json')
     const skill = await storage.getSkill(body.skillId)
     if (!skill) {
-      return c.json({ error: 'Skill bulunamadi' }, 404)
+      return c.json({ error: 'Skill not found' }, 404)
     }
 
     const skillPolicy = skill.policy || {
@@ -78,7 +78,7 @@ export function createProofsRouter(storage: StorageService, escrow: EscrowAdapte
 
     if (body.proof.witnesses.length < skillPolicy.minWitnessCount) {
       return c.json({
-        error: `Proof witness count yetersiz (min ${skillPolicy.minWitnessCount})`,
+        error: `Insufficient witness count (min ${skillPolicy.minWitnessCount})`,
       }, 400)
     }
 
@@ -126,15 +126,15 @@ export function createProofsRouter(storage: StorageService, escrow: EscrowAdapte
     const hasDeliveryPayload = !!body.delivery?.encryptedPayload
 
     if (isProd && !callbackUrl) {
-      return c.json({ error: 'Buyer callbackUrl bulunamadi' }, 409)
+      return c.json({ error: 'Buyer callbackUrl not found' }, 409)
     }
 
     if (isProd && !skill.deliveryPublicKey) {
-      return c.json({ error: 'deliveryPublicKey zorunlu (buyer decrypt key)' }, 400)
+      return c.json({ error: 'deliveryPublicKey required (buyer decrypt key)' }, 400)
     }
 
     if (callbackUrl && !hasDeliveryPayload && isProd) {
-      return c.json({ error: 'Delivery payload eksik' }, 400)
+      return c.json({ error: 'Delivery payload missing' }, 400)
     }
 
     if (callbackUrl && hasDeliveryPayload) {
@@ -144,11 +144,11 @@ export function createProofsRouter(storage: StorageService, escrow: EscrowAdapte
         callbackUrl.startsWith('http://127.0.0.1')
 
       if (!isHttpsCallback && !(isLocalHttpCallback && !isProd)) {
-        return c.json({ error: 'callbackUrl productionda HTTPS olmali' }, 400)
+        return c.json({ error: 'callbackUrl must be HTTPS in production' }, 400)
       }
 
       if (skillPolicy.requireHttpsCallback && !isHttpsCallback && !isLocalHttpCallback) {
-        return c.json({ error: 'Skill policy HTTPS callback gerektiriyor' }, 400)
+        return c.json({ error: 'Skill policy requires HTTPS callback' }, 400)
       }
 
       if (
@@ -209,7 +209,7 @@ export function createProofsRouter(storage: StorageService, escrow: EscrowAdapte
           deliveryResult.error = callbackError.slice(0, 300) || 'Buyer callback rejected'
           if (isProd) {
             return c.json({
-              error: 'Buyer HTTPS teslimati basarisiz',
+              error: 'Buyer HTTPS delivery failed',
               status: callbackResponse.status,
               detail: deliveryResult.error,
             }, 502)
@@ -224,7 +224,7 @@ export function createProofsRouter(storage: StorageService, escrow: EscrowAdapte
         }
 
         if (isProd) {
-          return c.json({ error: 'Buyer callback erisilemiyor' }, 503)
+          return c.json({ error: 'Buyer callback unreachable' }, 503)
         }
       }
     }
@@ -252,7 +252,7 @@ export function createProofsRouter(storage: StorageService, escrow: EscrowAdapte
 
       if (!targetEscrow) {
         if (isProd) {
-          return c.json({ error: 'Locked escrow kaydi bulunamadi' }, 409)
+          return c.json({ error: 'No locked escrow record found' }, 409)
         }
       } else {
         // Resolve provider Stellar address
@@ -264,7 +264,7 @@ export function createProofsRouter(storage: StorageService, escrow: EscrowAdapte
 
         if (!providerAddress) {
           if (isProd) {
-            return c.json({ error: 'Provider Stellar adresi bulunamadi' }, 400)
+            return c.json({ error: 'Provider Stellar address not found' }, 400)
           }
         } else {
           const skill = await storage.getSkill(body.skillId)
@@ -295,7 +295,7 @@ export function createProofsRouter(storage: StorageService, escrow: EscrowAdapte
       }
     } catch (err) {
       if (isProd) {
-        return c.json({ error: 'Escrow release basarisiz' }, 502)
+        return c.json({ error: 'Escrow release failed' }, 502)
       }
       console.warn('[proofs] Escrow auto-release failed (non-critical):', err)
     }

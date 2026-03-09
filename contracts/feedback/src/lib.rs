@@ -55,6 +55,10 @@ pub enum DataKey {
     StakeToken,
     /// Minimum stake amount required
     MinStake,
+    /// (mcp_id, version_index) → CidHistoryEntry (old CID + timestamp)
+    CidHistory(String, u64),
+    /// mcp_id → number of CID versions (u64)
+    CidVersionCount(String),
 }
 
 // ---------------------------------------------------------------------------
@@ -72,6 +76,16 @@ pub struct McpRecord {
     pub rating_sum: u64,
     pub rating_count: u64,
     pub registered_at: u64,
+    /// Whether MCP is active (default true). Inactive MCPs cannot be used.
+    pub active: bool,
+}
+
+#[contracttype]
+#[derive(Clone)]
+pub struct CidHistoryEntry {
+    pub old_cid: String,
+    pub new_cid: String,
+    pub changed_at: u64,
 }
 
 #[contracttype]
@@ -327,6 +341,7 @@ impl FeedbackContract {
             rating_sum: 0,
             rating_count: 0,
             registered_at: env.ledger().timestamp(),
+            active: true,
         };
 
         env.storage().persistent().set(&key, &record);
@@ -343,7 +358,113 @@ impl FeedbackContract {
     }
 
     // =======================================================================
-    // RECORD USE — requires stake
+    // UPDATE MCP CID — creator only, stores history
+    // =======================================================================
+
+    pub fn update_mcp_cid(env: Env, mcp_id: String, new_ipfs_hash: String) {
+        let key = DataKey::Mcp(mcp_id.clone());
+        let mut record: McpRecord = env
+            .storage()
+            .persistent()
+            .get(&key)
+            .expect("MCP not found");
+
+        record.creator.require_auth();
+
+        if !record.active {
+            panic!("MCP is deactivated");
+        }
+
+        // Store old CID in history
+        let version_key = DataKey::CidVersionCount(mcp_id.clone());
+        let version: u64 = env
+            .storage()
+            .persistent()
+            .get(&version_key)
+            .unwrap_or(0u64);
+
+        let history_entry = CidHistoryEntry {
+            old_cid: record.ipfs_hash.clone(),
+            new_cid: new_ipfs_hash.clone(),
+            changed_at: env.ledger().timestamp(),
+        };
+
+        let history_key = DataKey::CidHistory(mcp_id.clone(), version);
+        env.storage().persistent().set(&history_key, &history_entry);
+        env.storage()
+            .persistent()
+            .extend_ttl(&history_key, 6_307_200, 6_307_200);
+
+        // Increment version count
+        env.storage()
+            .persistent()
+            .set(&version_key, &(version + 1));
+        env.storage()
+            .persistent()
+            .extend_ttl(&version_key, 6_307_200, 6_307_200);
+
+        // Update record
+        record.ipfs_hash = new_ipfs_hash;
+        env.storage().persistent().set(&key, &record);
+        env.storage()
+            .persistent()
+            .extend_ttl(&key, 6_307_200, 6_307_200);
+
+        env.events().publish(
+            (
+                String::from_str(&env, "mcp"),
+                String::from_str(&env, "cid_updated"),
+            ),
+            mcp_id,
+        );
+    }
+
+    // =======================================================================
+    // DEACTIVATE MCP — admin or creator
+    // =======================================================================
+
+    pub fn deactivate_mcp(env: Env, caller: Address, mcp_id: String) {
+        caller.require_auth();
+
+        let key = DataKey::Mcp(mcp_id.clone());
+        let mut record: McpRecord = env
+            .storage()
+            .persistent()
+            .get(&key)
+            .expect("MCP not found");
+
+        // Only admin or creator can deactivate
+        let admin: Address = env
+            .storage()
+            .instance()
+            .get(&DataKey::Admin)
+            .expect("not initialized");
+
+        if caller != admin && caller != record.creator {
+            panic!("unauthorized: only admin or creator can deactivate");
+        }
+
+        if !record.active {
+            panic!("MCP already deactivated");
+        }
+
+        record.active = false;
+        env.storage().persistent().set(&key, &record);
+        env.storage()
+            .persistent()
+            .extend_ttl(&key, 6_307_200, 6_307_200);
+
+        env.events().publish(
+            (
+                String::from_str(&env, "mcp"),
+                String::from_str(&env, "deactivated"),
+            ),
+            mcp_id,
+        );
+    }
+
+    // =======================================================================
+    // RECORD USE — requires stake + active MCP
     // =======================================================================
 
     pub fn record_use(env: Env, mcp_id: String, payer: Address) {
@@ -356,6 +477,10 @@ impl FeedbackContract {
             .persistent()
             .get(&key)
             .expect("MCP not found");
+
+        if !record.active {
+            panic!("MCP is deactivated, cannot record use");
+        }
 
         if record.usage_fee > 0 {
             let token_client = token::TokenClient::new(&env, &record.token);
@@ -535,6 +660,24 @@ impl FeedbackContract {
             .get(&paid_key)
             .unwrap_or(0i128)
     }
+
+    /// Get CID history entry by index
+    pub fn get_cid_history(env: Env, mcp_id: String, index: u64) -> CidHistoryEntry {
+        let history_key = DataKey::CidHistory(mcp_id, index);
+        env.storage()
+            .persistent()
+            .get(&history_key)
+            .expect("CID history entry not found")
+    }
+
+    /// Get total number of CID updates for an MCP
+    pub fn get_cid_version_count(env: Env, mcp_id: String) -> u64 {
+        let version_key = DataKey::CidVersionCount(mcp_id);
+        env.storage()
+            .persistent()
+            .get(&version_key)
+            .unwrap_or(0u64)
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -698,5 +841,193 @@ mod tests {
 
         client.register_mcp(&mcp_id, &creator, &ipfs_hash, &token, &0i128);
         client.register_mcp(&mcp_id, &creator, &ipfs_hash, &token, &0i128);
+    }
+
+    // -----------------------------------------------------------------------
+    // CID Update + History
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn test_update_mcp_cid() {
+        let (env, admin, contract_id, xlm_addr) = setup();
+        let client = FeedbackContractClient::new(&env, &contract_id);
+
+        let creator = Address::generate(&env);
+        let token = Address::generate(&env);
+        stake_user(&env, &contract_id, &xlm_addr, &admin, &creator, 100_000_000);
+
+        let mcp_id = String::from_str(&env, "mcp-cid-test");
+        let old_hash = String::from_str(&env, "QmOldHash111");
+        let new_hash = String::from_str(&env, "QmNewHash222");
+
+        client.register_mcp(&mcp_id, &creator, &old_hash, &token, &0i128);
+
+        // Update CID
+        client.update_mcp_cid(&mcp_id, &new_hash);
+
+        // Verify new CID stored
+        let record = client.get_mcp(&mcp_id);
+        assert_eq!(record.ipfs_hash, new_hash);
+
+        // Verify history
+        assert_eq!(client.get_cid_version_count(&mcp_id), 1);
+        let history = client.get_cid_history(&mcp_id, &0);
+        assert_eq!(history.old_cid, old_hash);
+        assert_eq!(history.new_cid, new_hash);
+    }
+
+    #[test]
+    fn test_update_mcp_cid_multiple_times() {
+        let (env, admin, contract_id, xlm_addr) = setup();
+        let client = FeedbackContractClient::new(&env, &contract_id);
+
+        let creator = Address::generate(&env);
+        let token = Address::generate(&env);
+        stake_user(&env, &contract_id, &xlm_addr, &admin, &creator, 100_000_000);
+
+        let mcp_id = String::from_str(&env, "mcp-multi-cid");
+        let hash1 = String::from_str(&env, "QmHash1");
+        let hash2 = String::from_str(&env, "QmHash2");
+        let hash3 = String::from_str(&env, "QmHash3");
+
+        client.register_mcp(&mcp_id, &creator, &hash1, &token, &0i128);
+        client.update_mcp_cid(&mcp_id, &hash2);
+        client.update_mcp_cid(&mcp_id, &hash3);
+
+        assert_eq!(client.get_cid_version_count(&mcp_id), 2);
+
+        let h0 = client.get_cid_history(&mcp_id, &0);
+        assert_eq!(h0.old_cid, hash1);
+        assert_eq!(h0.new_cid, hash2);
+
+        let h1 = client.get_cid_history(&mcp_id, &1);
+        assert_eq!(h1.old_cid, hash2);
+        assert_eq!(h1.new_cid, hash3);
+
+        let record = client.get_mcp(&mcp_id);
+        assert_eq!(record.ipfs_hash, hash3);
+    }
+
+    // -----------------------------------------------------------------------
+    // Deactivation
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn test_deactivate_mcp_by_creator() {
+        let (env, admin, contract_id, xlm_addr) = setup();
+        let client = FeedbackContractClient::new(&env, &contract_id);
+
+        let creator = Address::generate(&env);
+        let token = Address::generate(&env);
+        stake_user(&env, &contract_id, &xlm_addr, &admin, &creator, 100_000_000);
+
+        let mcp_id = String::from_str(&env, "mcp-deact");
+        let hash = String::from_str(&env, "QmDeactHash");
+        client.register_mcp(&mcp_id, &creator, &hash, &token, &0i128);
+
+        // Creator deactivates
+        client.deactivate_mcp(&creator, &mcp_id);
+
+        let record = client.get_mcp(&mcp_id);
+        assert!(!record.active);
+    }
+
+    #[test]
+    fn test_deactivate_mcp_by_admin() {
+        let (env, admin, contract_id, xlm_addr) = setup();
+        let client = FeedbackContractClient::new(&env, &contract_id);
+
+        let creator = Address::generate(&env);
+        let token = Address::generate(&env);
+        stake_user(&env, &contract_id, &xlm_addr, &admin, &creator, 100_000_000);
+
+        let mcp_id = String::from_str(&env, "mcp-admin-deact");
+        let hash = String::from_str(&env, "QmAdminDeact");
+        client.register_mcp(&mcp_id, &creator, &hash, &token, &0i128);
+
+        // Admin deactivates
+        client.deactivate_mcp(&admin, &mcp_id);
+
+        let record = client.get_mcp(&mcp_id);
+        assert!(!record.active);
+    }
+
+    #[test]
+    #[should_panic(expected = "unauthorized: only admin or creator can deactivate")]
+    fn test_deactivate_mcp_unauthorized_panics() {
+        let (env, admin, contract_id, xlm_addr) = setup();
+        let client = FeedbackContractClient::new(&env, &contract_id);
+
+        let creator = Address::generate(&env);
+        let random = Address::generate(&env);
+        let token = Address::generate(&env);
+        stake_user(&env, &contract_id, &xlm_addr, &admin, &creator, 100_000_000);
+
+        let mcp_id = String::from_str(&env, "mcp-unauth-deact");
+        let hash = String::from_str(&env, "QmUnauth");
+        client.register_mcp(&mcp_id, &creator, &hash, &token, &0i128);
+
+        // Random user tries to deactivate — must panic
+        client.deactivate_mcp(&random, &mcp_id);
+    }
+
+    #[test]
+    #[should_panic(expected = "MCP is deactivated, cannot record use")]
+    fn test_record_use_deactivated_panics() {
+        let (env, admin, contract_id, xlm_addr) = setup();
+        let client = FeedbackContractClient::new(&env, &contract_id);
+
+        let creator = Address::generate(&env);
+        let payer = Address::generate(&env);
+        let token = Address::generate(&env);
+        stake_user(&env, &contract_id, &xlm_addr, &admin, &creator, 100_000_000);
+        stake_user(&env, &contract_id, &xlm_addr, &admin, &payer, 100_000_000);
+
+        let mcp_id = String::from_str(&env, "mcp-deact-use");
+        let hash = String::from_str(&env, "QmDeactUse");
+        client.register_mcp(&mcp_id, &creator, &hash, &token, &0i128);
+
+        client.deactivate_mcp(&creator, &mcp_id);
+
+        // Try to use deactivated MCP — must panic
+        client.record_use(&mcp_id, &payer);
+    }
+
+    #[test]
+    #[should_panic(expected = "MCP is deactivated")]
+    fn test_update_cid_deactivated_panics() {
+        let (env, admin, contract_id, xlm_addr) = setup();
+        let client = FeedbackContractClient::new(&env, &contract_id);
+
+        let creator = Address::generate(&env);
+        let token = Address::generate(&env);
+        stake_user(&env, &contract_id, &xlm_addr, &admin, &creator, 100_000_000);
+
+        let mcp_id = String::from_str(&env, "mcp-deact-cid");
+        let hash = String::from_str(&env, "QmDeactCid");
+        client.register_mcp(&mcp_id, &creator, &hash, &token, &0i128);
+
+        client.deactivate_mcp(&creator, &mcp_id);
+
+        // Try to update CID on deactivated MCP — must panic
+        let new_hash = String::from_str(&env, "QmNewAfterDeact");
+        client.update_mcp_cid(&mcp_id, &new_hash);
+    }
+
+    #[test]
+    fn test_active_field_defaults_true() {
+        let (env, admin, contract_id, xlm_addr) = setup();
+        let client = FeedbackContractClient::new(&env, &contract_id);
+
+        let creator = Address::generate(&env);
+        let token = Address::generate(&env);
+        stake_user(&env, &contract_id, &xlm_addr, &admin, &creator, 100_000_000);
+
+        let mcp_id = String::from_str(&env, "mcp-active-check");
+        let hash = String::from_str(&env, "QmActiveCheck");
+        client.register_mcp(&mcp_id, &creator, &hash, &token, &0i128);
+
+        let record = client.get_mcp(&mcp_id);
+        assert!(record.active);
     }
 }
