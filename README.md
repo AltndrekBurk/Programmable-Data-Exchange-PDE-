@@ -112,46 +112,61 @@ The key innovation: **zero-knowledge TLS proofs** verify that data actually came
    │  (platform keypair)     │                            │
    ├────────────────────────►│                            │
    │                         │                            │
-   │                         │  8. Provider fetches data  │
-   │                         │  from source API           │
-   │                         │  (Fitbit, Strava, etc.)    │
    │                         │                            │
-   │                         │  9. Generate ZK-TLS proof  │
-   │                         │  via Reclaim Protocol      │
-   │                         │  (ed25519 witness sigs)    │
+   │                         │  8. createApiProof()       │
+   │                         │  calls zkFetch() which     │
+   │                         │  routes through            │
+   │                         │  ATTESTOR-CORE:            │
    │                         │                            │
-   │                         │  10. Encrypt payload with  │
+   │                         │    Provider ──► Attestor   │
+   │                         │    Attestor ──► Source API │
+   │                         │    (Fitbit, Strava, etc.)  │
+   │                         │    Attestor opens own TLS  │
+   │                         │    connection, witnesses   │
+   │                         │    response, signs claim   │
+   │                         │    with ed25519 key        │
+   │                         │    ◄── ReclaimProof        │
+   │                         │    { claimData,            │
+   │                         │      signatures[],         │
+   │                         │      witnesses[] }         │
+   │                         │                            │
+   │                         │  9. Encrypt payload with   │
    │                         │  buyer's deliveryPublicKey │
    │                         │                            │
-   │                         │  11. POST /api/proofs/submit
+   │                         │  10. POST /api/proofs/submit
    │                         │  {proof, encryptedPayload} │
    │                         │◄───────────────────────────┤
    │                         │                            │
-   │                         │  12. Verify x402 payment   │
+   │                         │  11. Verify x402 payment   │
    │                         │  header (0.01 USDC spam    │
    │                         │  fee via OZ Relayer)       │
    │                         │                            │
-   │                         │  13. Validate ZK proof     │
-   │                         │  (ed25519 witness sigs,    │
-   │                         │   freshness, replay check) │
+   │                         │  12. verifyDataProof():    │
+   │                         │  - sha256(claimData)       │
+   │                         │  - ed25519.verify(sig,     │
+   │                         │    hash, witnessKey)       │
+   │                         │  - Check witnessKey is in  │
+   │                         │    ATTESTOR_PUBLIC_KEYS    │
+   │                         │  - Freshness ±7 days       │
+   │                         │  - Replay protection       │
    │                         │                            │
-   │                         │  14. Link proof to escrow  │
+   │                         │  13. Link proof to escrow  │
    │                         │  set_proof(proof_cid,      │
    │                         │  proof_hash) on contract   │
    │                         │                            │
-   │  15. Forward encrypted  │                            │
+   │  14. Forward encrypted  │                            │
    │  payload to buyer       │                            │
    │  callback URL           │                            │
    │◄────────────────────────┤                            │
    │                         │                            │
-   │                         │  16. Escrow release        │
+   │                         │  15. Escrow release        │
    │                         │  (Soroban contract call)   │
    │                         │  70% provider              │
    │                         │  20% platform              │
    │                         │  10% dispute reserve       │
    │                         │  + MCP creator fee (if any)│
    │                         │                            │
-   │  17. Buyer decrypts     │                            │
+   │  16. Buyer decrypts     │                            │
    │  payload with private   │                            │
    │  key, verifies checksum │                            │
    ▼                         ▼                            ▼
@@ -174,20 +189,30 @@ The key innovation: **zero-knowledge TLS proofs** verify that data actually came
 #### Phase 3: Escrow Lock (Buyer — via API)
 9. Buyer locks USDC into the Soroban escrow contract via `POST /api/escrow/lock`. This goes through the API because the Soroban `deposit()` call requires the platform's keypair. The contract records a `timeout_at` for automatic expiry protection.
 
-#### Phase 4: Data Collection & Proof Generation (Provider/OpenClaw)
-10. OpenClaw bot (or provider manually) fetches data from the source API (e.g., Fitbit REST API).
-11. ZK-TLS proof is generated using Reclaim Protocol's `zkFetch` — ed25519 witness signatures cryptographically prove the data came from the real API endpoint with a valid TLS session.
-12. The data payload is encrypted using the buyer's `deliveryPublicKey` from the skill metadata. The facilitator **never** sees plaintext.
+#### Phase 4: Data Collection & ZK-TLS Proof Generation (Provider/OpenClaw)
+10. Provider calls `createApiProof()` which internally uses Reclaim's `zkFetch()`.
+11. `zkFetch()` routes the request through **self-hosted attestor-core** (TLS witness):
+    - Attestor opens its **own TLS connection** to the source API (e.g., Fitbit REST API).
+    - Attestor witnesses the raw response — provider cannot modify what the attestor sees.
+    - Attestor computes `sha256(canonicalClaimData)` and signs it with its ed25519 private key.
+    - Returns `ReclaimProof` with `{ claimData, signatures[], witnesses[] }`.
+12. Provider encrypts the data payload using the buyer's `deliveryPublicKey` from skill metadata. The facilitator **never** sees plaintext.
 
 #### Phase 5: Proof Submission & Verification (Facilitator)
 13. Provider submits to `POST /api/proofs/submit` with the proof and encrypted payload.
 14. x402 middleware validates the Stellar USDC payment header (0.01 USDC spam fee via OpenZeppelin Relayer).
-15. Facilitator runs proof verification: ed25519 witness signature validation, proof freshness (max age), provider match, replay protection (no duplicate submissions).
+15. Facilitator calls `verifyDataProof()`:
+    - Canonical JSON serialization of `claimData` → `sha256` hash.
+    - `ed25519.verify(signature, hash, witnessPublicKey)` for each witness.
+    - If `ATTESTOR_PUBLIC_KEYS` env is set (production): require at least one signature from a known attestor. Unknown attestor signatures are rejected.
+    - If not set (dev mode): accept any valid ed25519 signature.
+    - Freshness check: proof timestamp must be within ±7 days.
+    - Replay protection: same `proofHash` cannot be submitted twice. Same provider cannot submit within replay window.
 16. Proof is linked to escrow via `set_proof(proof_cid, proof_hash)` on the Soroban contract — this is required before release.
 17. If valid, the encrypted payload is forwarded to the buyer's callback URL with integrity metadata (proofHash, checksum).
 
 #### Phase 6: Payment & Settlement (Soroban Contract)
-18. Escrow release is triggered atomically on Soroban (requires proof_hash to be set):
+18. Escrow release triggered atomically on Soroban (requires proof_hash to be set):
     - **70%** → Provider (data seller)
     - **20%** → Platform (facilitator fee)
     - **10%** → Dispute reserve
