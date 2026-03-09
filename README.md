@@ -100,93 +100,90 @@ The key innovation: **zero-knowledge TLS proofs** verify that data actually came
 ### Step-by-Step Walkthrough
 
 ```
- Buyer              Platform API          Soroban Contract       Provider / Attestor
-   │                     │                      │                         │
-   │  1. Create skill    │                      │                         │
-   │  (data source,      │                      │                         │
-   │   metrics, policy,  │                      │                         │
-   │   deliveryPubKey)   │                      │                         │
-   │                     │                      │                         │
-   │  2. Upload JSON     │                      │                         │
-   │  to IPFS (Pinata)   │                      │                         │
-   │  → CID returned     │                      │                         │
-   │                     │                      │                         │
-   │  3. Index CID on    │                      │                         │
-   │  Stellar (Freighter)│                      │                         │
-   │  manage_data TX     │                      │                         │
-   │                     │                      │                         │
-   │  4. POST /notify    │                      │                         │
-   │  {txHash, CID}      │                      │                         │
-   │  (awareness only)   │                      │                         │
-   ├────────────────────►│                      │                         │
-   │                     │  5. Dispatch task     │                         │
-   │                     ├──────────────────────────────────────────────►│
-   │                     │                      │                         │
-   │                     │                      │  6. Provider ACCEPTS    │
-   │                     │                      │  consent TX (Freighter) │
-   │                     │                      │  written to Stellar     │
-   │                     │◄──────────────────────────────────────────────┤
-   │                     │                      │                         │
-   │  7. Lock USDC       │                      │                         │
-   │  POST /escrow/lock  │                      │                         │
-   ├────────────────────►│  deposit()           │                         │
-   │                     ├─────────────────────►│                         │
-   │                     │                      │  USDC locked            │
-   │                     │                      │  timeout_at set         │
-   │                     │◄─────────────────────┤                         │
-   │                     │                      │                         │
-   │                     │                      │  8. createApiProof()    │
-   │                     │                      │  → zkFetch() routes     │
-   │                     │                      │    through ATTESTOR:    │
-   │                     │                      │                         │
-   │                     │                      │  Attestor ──► Source API│
-   │                     │                      │  (opens own TLS conn)   │
-   │                     │                      │  Witnesses raw response │
-   │                     │                      │  Signs sha256(claimData)│
-   │                     │                      │  with ed25519 key       │
-   │                     │                      │  ◄── ReclaimProof       │
-   │                     │                      │                         │
-   │                     │                      │  9. Encrypt payload     │
-   │                     │                      │  with buyer's           │
-   │                     │                      │  deliveryPublicKey      │
-   │                     │                      │                         │
-   │                     │  10. POST /proofs/submit                       │
-   │                     │  {proof, encPayload}  │                        │
-   │                     │◄──────────────────────────────────────────────┤
-   │                     │                      │                         │
-   │                     │  11. x402 verify      │                        │
-   │                     │  (0.01 USDC spam fee) │                        │
-   │                     │                      │                         │
-   │                     │  12. verifyDataProof()│                        │
-   │                     │  sha256 → ed25519    │                         │
-   │                     │  check witnessKey vs │                         │
-   │                     │  ATTESTOR_PUBLIC_KEYS │                        │
-   │                     │  freshness + replay  │                         │
-   │                     │                      │                         │
-   │                     │  13. set_proof()      │                        │
-   │                     ├─────────────────────►│                         │
-   │                     │                      │  proof_cid + hash       │
-   │                     │                      │  stored on-chain        │
-   │                     │◄─────────────────────┤                         │
-   │                     │                      │                         │
-   │  14. Encrypted      │                      │                         │
-   │  payload delivered  │                      │                         │
-   │  to buyer callback  │                      │                         │
-   │◄────────────────────┤                      │                         │
-   │                     │                      │                         │
-   │                     │  15. release()        │                        │
-   │                     ├─────────────────────►│                         │
-   │                     │                      │  Atomic 3-way split:    │
-   │                     │                      │  70% → Provider         │
-   │                     │                      │  20% → Platform         │
-   │                     │                      │  10% → Dispute pool     │
-   │                     │                      │  + MCP creator fee      │
-   │                     │◄─────────────────────┤                         │
-   │                     │                      │                         │
-   │  16. Decrypt with   │                      │                         │
-   │  private key,       │                      │                         │
-   │  verify checksum    │                      │                         │
-   ▼                     ▼                      ▼                         ▼
+ Buyer                Platform API         Soroban Contract     Provider / Attestor
+   │                       │                     │                       │
+   │  ── 1. Create skill ──────────────────────────────────────────────────
+   │  │  (data source, metrics, policy, deliveryPubKey)                │
+   │                       │                     │                       │
+   │  ── 2. Upload skill JSON to IPFS (Pinata) ──► CID returned         │
+   │                       │                     │                       │
+   │  ── 3. Index CID on Stellar (Freighter) ───► manage_data TX        │
+   │                       │                     │                       │
+   │  4. POST /notify      │                     │                       │
+   │  {txHash, CID}        │                     │                       │
+   ├──────────────────────►│                     │                       │
+   │                       │  5. Dispatch task   │                       │
+   │                       ├─────────────────────────────────────────────►
+   │                       │                     │                       │
+   │                       │                     │  6. Provider ACCEPTS  │
+   │                       │                     │  consent TX written   │
+   │                       │                     │  to Stellar           │
+   │                       │                     │  (via Freighter)      │
+   │                       │◄────────────────────────────────────────────┤
+   │                       │                     │                       │
+   │  7. Consent confirmed │                     │                       │
+   │◄──────────────────────┤                     │                       │
+   │                       │                     │                       │
+   │  8. Lock USDC         │                     │                       │
+   │  POST /escrow/lock    │                     │                       │
+   ├──────────────────────►│                     │                       │
+   │                       │  deposit()          │                       │
+   │                       ├────────────────────►│                       │
+   │                       │                     │  USDC locked          │
+   │                       │                     │  timeout_at set       │
+   │                       │◄────────────────────┤                       │
+   │                       │                     │                       │
+   │                       │                     │    9. createApiProof()│
+   │                       │                     │    zkFetch() routes   │
+   │                       │                     │    through attestor:  │
+   │                       │                     │                       │
+   │                       │                     │    Attestor──►Src API │
+   │                       │                     │    (own TLS conn)     │
+   │                       │                     │    Witnesses response │
+   │                       │                     │    Signs sha256 hash  │
+   │                       │                     │    ◄── ReclaimProof   │
+   │                       │                     │                       │
+   │                       │                     │   10. Encrypt payload │
+   │                       │                     │   with buyer's        │
+   │                       │                     │   deliveryPublicKey   │
+   │                       │                     │                       │
+   │                       │  11. POST /proofs/submit                   │
+   │                       │  {proof, encPayload}│                      │
+   │                       │◄────────────────────────────────────────────┤
+   │                       │                     │                       │
+   │                       │  12. x402 verify    │                       │
+   │                       │  (0.01 USDC fee)    │                       │
+   │                       │                     │                       │
+   │                       │  13. verifyDataProof()                      │
+   │                       │  sha256 → ed25519   │                       │
+   │                       │  witnessKey check   │                       │
+   │                       │  vs ATTESTOR_KEYS   │                       │
+   │                       │  freshness + replay │                       │
+   │                       │                     │                       │
+   │                       │  14. set_proof()    │                       │
+   │                       ├────────────────────►│                       │
+   │                       │                     │  proof_cid + hash     │
+   │                       │                     │  stored on-chain      │
+   │                       │◄────────────────────┤                       │
+   │                       │                     │                       │
+   │  15. Encrypted        │                     │                       │
+   │  payload delivered    │                     │                       │
+   │  to buyer callback    │                     │                       │
+   │◄──────────────────────┤                     │                       │
+   │                       │                     │                       │
+   │                       │  16. release()      │                       │
+   │                       ├────────────────────►│                       │
+   │                       │                     │  Atomic 3-way split:  │
+   │                       │                     │  70% → Provider       │
+   │                       │                     │  20% → Platform       │
+   │                       │                     │  10% → Dispute pool   │
+   │                       │                     │  + MCP creator fee    │
+   │                       │◄────────────────────┤                       │
+   │                       │                     │                       │
+   │  17. Decrypt with     │                     │                       │
+   │  private key,         │                     │                       │
+   │  verify checksum      │                     │                       │
+   ▼                       ▼                     ▼                       ▼
 ```
 
 ### Detailed Phase Breakdown
@@ -200,41 +197,40 @@ The key innovation: **zero-knowledge TLS proofs** verify that data actually came
 
 #### Phase 2: Task Acceptance & Consent (Provider — Frontend-First)
 6. Provider sees the task (via web UI `/tasks` page or OpenClaw bot on WhatsApp/Telegram/Discord).
-7. Provider accepts — a consent transaction is written to Stellar via Freighter from the provider's browser (`CONSENT:<skillId>:<pseudoId>:ACCEPT`).
-8. Consent is recorded via `POST /api/consent/record`.
+7. Provider accepts — a consent transaction is written to Stellar via Freighter from the provider's browser (`CONSENT:<skillId>:<pseudoId>:ACCEPT`). Platform notifies buyer that a provider has accepted.
 
 #### Phase 3: Escrow Lock (Buyer — via API)
-9. Buyer locks USDC into the Soroban escrow contract via `POST /api/escrow/lock`. This goes through the API because the Soroban `deposit()` call requires the platform's keypair. The contract records a `timeout_at` for automatic expiry protection.
+8. Buyer locks USDC into the Soroban escrow contract via `POST /api/escrow/lock`. This goes through the API because the Soroban `deposit()` call requires the platform's keypair. The contract records a `timeout_at` for automatic expiry protection.
 
 #### Phase 4: Data Collection & ZK-TLS Proof Generation (Provider/OpenClaw)
-10. Provider calls `createApiProof()` which internally uses Reclaim's `zkFetch()`.
-11. `zkFetch()` routes the request through **self-hosted attestor-core** (TLS witness):
+9. Provider calls `createApiProof()` which internally uses Reclaim's `zkFetch()`.
+10. `zkFetch()` routes the request through **self-hosted attestor-core** (TLS witness):
     - Attestor opens its **own TLS connection** to the source API (e.g., Fitbit REST API).
     - Attestor witnesses the raw response — provider cannot modify what the attestor sees.
     - Attestor computes `sha256(canonicalClaimData)` and signs it with its ed25519 private key.
     - Returns `ReclaimProof` with `{ claimData, signatures[], witnesses[] }`.
-12. Provider encrypts the data payload using the buyer's `deliveryPublicKey` from skill metadata. The facilitator **never** sees plaintext.
+11. Provider encrypts the data payload using the buyer's `deliveryPublicKey` from skill metadata. The facilitator **never** sees plaintext.
 
 #### Phase 5: Proof Submission & Verification (Facilitator)
-13. Provider submits to `POST /api/proofs/submit` with the proof and encrypted payload.
-14. x402 middleware validates the Stellar USDC payment header (0.01 USDC spam fee via OpenZeppelin Relayer).
-15. Facilitator calls `verifyDataProof()`:
+12. Provider submits to `POST /api/proofs/submit` with the proof and encrypted payload.
+13. x402 middleware validates the Stellar USDC payment header (0.01 USDC spam fee via OpenZeppelin Relayer).
+14. Facilitator calls `verifyDataProof()`:
     - Canonical JSON serialization of `claimData` → `sha256` hash.
     - `ed25519.verify(signature, hash, witnessPublicKey)` for each witness.
     - If `ATTESTOR_PUBLIC_KEYS` env is set (production): require at least one signature from a known attestor. Unknown attestor signatures are rejected.
     - If not set (dev mode): accept any valid ed25519 signature.
     - Freshness check: proof timestamp must be within ±7 days.
     - Replay protection: same `proofHash` cannot be submitted twice. Same provider cannot submit within replay window.
-16. Proof is linked to escrow via `set_proof(proof_cid, proof_hash)` on the Soroban contract — this is required before release.
-17. If valid, the encrypted payload is forwarded to the buyer's callback URL with integrity metadata (proofHash, checksum).
+15. Proof is linked to escrow via `set_proof(proof_cid, proof_hash)` on the Soroban contract — this is required before release.
+16. If valid, the encrypted payload is forwarded to the buyer's callback URL with integrity metadata (proofHash, checksum).
 
 #### Phase 6: Payment & Settlement (Soroban Contract)
-18. Escrow release triggered atomically on Soroban (requires proof_hash to be set):
+17. Escrow release triggered atomically on Soroban (requires proof_hash to be set):
     - **70%** → Provider (data seller)
     - **20%** → Platform (facilitator fee)
     - **10%** → Dispute reserve
     - If an MCP standard was used, the MCP creator gets a fee from the platform share via `release_with_mcp_fee`.
-19. Buyer decrypts the payload with their private key and verifies the checksum.
+18. Buyer decrypts the payload with their private key and verifies the checksum.
 
 #### Dispute & Safety Mechanisms
 - **Dispute:** Either party can dispute a locked escrow via `POST /api/escrow/dispute`. The Soroban contract marks it as disputed.

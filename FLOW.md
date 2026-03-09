@@ -37,44 +37,43 @@ Last updated: 2026-03-09 (v2.0)
 
 ### Phase 2: Task Discovery & Consent (Provider — Frontend-First)
 6. Provider sees tasks by reading directly from Stellar Horizon + IPFS (no API needed).
-7. Provider accepts — consent TX written to Stellar via Freighter from provider's browser.
-8. Consent recorded via `POST /api/consent/record` (orchestration).
+7. Provider accepts — consent TX written to Stellar via Freighter from provider's browser. Platform notifies buyer that a provider has accepted.
 
 ### Phase 3: Escrow Lock (Buyer — via API)
-9. Buyer locks USDC into Soroban escrow contract via `POST /api/escrow/lock`.
+8. Buyer locks USDC into Soroban escrow contract via `POST /api/escrow/lock`.
    - Goes through API because Soroban `deposit()` requires the platform's keypair.
    - Contract records `timeout_at` for automatic expiry protection.
 
 ### Phase 4: Data Collection & ZK-TLS Proof Generation (Provider/OpenClaw)
-10. OpenClaw bot (or provider manually) calls `createApiProof()` which internally uses `zkFetch()`.
-11. `zkFetch()` routes the API request through **attestor-core** (self-hosted TLS witness):
+9. OpenClaw bot (or provider manually) calls `createApiProof()` which internally uses `zkFetch()`.
+10. `zkFetch()` routes the API request through **attestor-core** (self-hosted TLS witness):
     - Attestor opens its own TLS connection to the source API (e.g., Fitbit).
     - Attestor witnesses the raw response (provider cannot modify it).
     - Attestor hashes the response, signs `{ url, responseHash, timestamp }` with ed25519 private key.
     - Returns `ReclaimProof` with `claimData` + `signatures[]` + `witnesses[]`.
-12. Provider encrypts the data payload using buyer's `deliveryPublicKey` from skill metadata.
+11. Provider encrypts the data payload using buyer's `deliveryPublicKey` from skill metadata.
     - Facilitator **never** sees plaintext data.
 
 ### Phase 5: Proof Submission & Verification (Facilitator)
-13. Provider submits to `POST /api/proofs/submit` with proof + encrypted payload.
-14. x402 middleware validates Stellar USDC payment header (0.01 USDC spam fee via OpenZeppelin Relayer).
-15. Facilitator runs `verifyDataProof()`:
+12. Provider submits to `POST /api/proofs/submit` with proof + encrypted payload.
+13. x402 middleware validates Stellar USDC payment header (0.01 USDC spam fee via OpenZeppelin Relayer).
+14. Facilitator runs `verifyDataProof()`:
     - Canonical JSON serialization of `claimData` → sha256 hash.
     - ed25519 signature verification for each witness.
     - If `ATTESTOR_PUBLIC_KEYS` set: require signature from known attestor (production).
     - If not set: accept any valid ed25519 signature (dev mode).
     - Freshness check: timestamp within ±7 days.
     - Replay protection: same proofHash cannot be submitted twice.
-16. Proof linked to escrow via `set_proof(proof_cid, proof_hash)` on Soroban contract — required before release.
-17. Encrypted payload forwarded to buyer's callback URL with integrity metadata (proofHash, checksum).
+15. Proof linked to escrow via `set_proof(proof_cid, proof_hash)` on Soroban contract — required before release.
+16. Encrypted payload forwarded to buyer's callback URL with integrity metadata (proofHash, checksum).
 
 ### Phase 6: Payment & Settlement (Soroban Contract)
-18. Escrow release triggered atomically on Soroban (requires proof_hash to be set):
+17. Escrow release triggered atomically on Soroban (requires proof_hash to be set):
     - **70%** → Provider (data seller)
     - **20%** → Platform (facilitator fee)
     - **10%** → Dispute reserve
     - MCP creator fee deducted from platform share via `release_with_mcp_fee` if applicable.
-19. Buyer decrypts payload with private key, verifies checksum.
+18. Buyer decrypts payload with private key, verifies checksum.
 
 ### Dispute & Safety
 - **Dispute:** Either party can dispute a locked escrow. Contract marks it as disputed.
