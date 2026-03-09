@@ -370,7 +370,7 @@ PSEUDONYM_SECRET=your-hmac-secret
 | Frontend | Next.js 16, TypeScript, Tailwind CSS, NextAuth v4 |
 | Backend | Hono (serverless on Vercel) |
 | Blockchain | Stellar testnet + Soroban smart contracts (Rust) |
-| ZK-TLS | Reclaim Protocol (`@reclaimprotocol/zk-fetch`) + ed25519 verification (`@noble/curves`) |
+| ZK-TLS | Self-hosted `attestor-core` + Reclaim Protocol (`@reclaimprotocol/zk-fetch`) + ed25519 verification (`@noble/curves`) |
 | ZK On-chain | Stellar Protocol 25 X-Ray (native BN254 + Poseidon) |
 | IPFS | Pinata (per-user or platform keys) |
 | Payments | x402 on Stellar (OpenZeppelin Relayer) + Soroban escrow |
@@ -399,20 +399,63 @@ PSEUDONYM_SECRET=your-hmac-secret
 - Obtain `X402_API_KEY` from OpenZeppelin
 - Configure `STELLAR_PLATFORM_SECRET` for escrow operations
 
-### Critical Stage: ZK-TLS
+### ZK-TLS Architecture
 
-The Reclaim Protocol hosted system requires per-app `APP_ID` registration + mobile QR scanning, which doesn't fit our model (any web API, no per-source registration).
+ZK-TLS (Zero-Knowledge TLS) proves that data came from a real API endpoint without exposing raw data. Three components work together:
 
-**Solution:** Self-hosted [`attestor-core`](https://github.com/reclaimprotocol/attestor-core) — standalone, no APP_ID needed, runs on port 8001 with just a private key.
+```
+Provider/OpenClaw                  Attestor-Core                    Source API
+      │                                 │                              │
+      │  1. zkFetch(apiUrl, token)      │                              │
+      │ ───────────────────────────────>│                              │
+      │                                 │  2. Opens TLS to source      │
+      │                                 │ ────────────────────────────>│
+      │                                 │  3. Witnesses the response   │
+      │                                 │ <────────────────────────────│
+      │                                 │                              │
+      │                                 │  4. Signs claim with ed25519 │
+      │                                 │     (URL + response hash     │
+      │                                 │      + timestamp)            │
+      │                                 │                              │
+      │  5. Returns ReclaimProof        │                              │
+      │     { claimData, signatures,    │                              │
+      │       witnesses[] }             │                              │
+      │ <───────────────────────────────│                              │
+      │                                                                │
+      │  6. POST /api/proofs/submit ──────────> Platform API           │
+      │     (proof + encrypted payload)          │                     │
+      │                                          │ 7. verifyDataProof()│
+      │                                          │   ed25519 sig ✓     │
+      │                                          │   attestor pubkey ✓ │
+      │                                          │   timestamp fresh ✓ │
+      │                                          │   replay check ✓    │
+```
+
+| Component | Role | Where |
+|-----------|------|-------|
+| **Attestor-core** | TLS witness — observes API response, signs claim with ed25519 | Self-hosted server (port 8001) |
+| **Reclaim SDK** | `zkFetch()` — routes API call through attestor, produces proof | Provider side (OpenClaw/bot) |
+| **Platform API** | `verifyDataProof()` — validates ed25519 signatures against known attestor keys | `packages/reclaim/src/index.ts` |
+| **Soroban Contract** | `set_proof(proof_cid, proof_hash)` — links proof to escrow on-chain | Stellar testnet |
+
+**Why can't the seller fake data?** The attestor independently opens a TLS connection to the source API and witnesses the raw response. The seller never gets to modify what the attestor signs.
+
+**Self-hosted attestor-core** — no APP_ID needed, standalone, any web API:
 
 ```bash
 git clone https://github.com/reclaimprotocol/attestor-core
 cd attestor-core && npm install
-echo "PRIVATE_KEY=<ed25519-key>" > .env
+echo "PRIVATE_KEY=<ed25519-private-key-hex>" > .env
 npm run start:tsc  # Runs on port 8001
 ```
 
-Then set `ATTESTOR_URL=http://your-server:8001` and `ATTESTOR_PUBLIC_KEYS=<hex-pubkey>` in your environment.
+Then set in your platform `.env`:
+```env
+ATTESTOR_URL=http://your-server:8001
+ATTESTOR_PUBLIC_KEYS=<attestor-ed25519-public-key-hex>
+```
+
+**Health check:** `GET /health` on the API returns attestor connectivity status.
 
 ---
 

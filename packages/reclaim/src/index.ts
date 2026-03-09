@@ -24,8 +24,13 @@ export interface ProofResult {
 }
 
 /**
- * Raw Reclaim proof structure (subset of the full SDK type).
- * Use `proof` field as opaque data when forwarding to the smart contract.
+ * Raw Reclaim proof structure.
+ *
+ * witnesses[].id = hex-encoded ed25519 public key of the attestor
+ * signatures[]  = hex-encoded ed25519 signatures over sha256(claimData)
+ *
+ * The attestor-core signs the canonical JSON of claimData. The platform
+ * verifies these signatures against known attestor public keys.
  */
 export interface ReclaimProof {
   identifier: string;
@@ -50,34 +55,73 @@ export interface ReclaimProof {
 /**
  * Get known attestor public keys from environment.
  * Format: comma-separated hex-encoded ed25519 public keys.
- * Example: ATTESTOR_PUBLIC_KEYS=aabbcc...,ddeeff...
+ *
+ * In production, ATTESTOR_PUBLIC_KEYS **must** be set — otherwise anyone
+ * can spin up an attestor and forge proofs.
+ *
+ * Example: ATTESTOR_PUBLIC_KEYS=aabbcc01...,ddeeff02...
  */
 function getAttestorPublicKeys(): string[] {
   const raw = process.env.ATTESTOR_PUBLIC_KEYS ?? "";
   if (!raw.trim()) return [];
   return raw
     .split(",")
-    .map((k) => k.trim())
+    .map((k) => k.trim().toLowerCase())
     .filter((k) => k.length > 0);
 }
 
 /**
- * Attestor URL for self-hosted attestor-core.
+ * Self-hosted attestor-core URL.
+ *
+ * attestor-core is the TLS witness that observes API responses and signs
+ * claim data with its ed25519 private key. It never stores raw data.
+ *
+ * Deploy: https://github.com/reclaimprotocol/attestor-core
+ *   git clone → npm install → PRIVATE_KEY=<hex> → npm run start:tsc
+ *
  * Default: http://localhost:8001
  */
 function getAttestorUrl(): string {
   return process.env.ATTESTOR_URL ?? "http://localhost:8001";
 }
 
+/**
+ * Check attestor-core health before making proof requests.
+ * Returns true if the attestor is reachable.
+ */
+export async function checkAttestorHealth(): Promise<{
+  healthy: boolean;
+  url: string;
+  error?: string;
+}> {
+  const url = getAttestorUrl();
+  try {
+    const res = await fetch(`${url}/health`, {
+      signal: AbortSignal.timeout(5000),
+    });
+    return { healthy: res.ok, url };
+  } catch (err) {
+    return {
+      healthy: false,
+      url,
+      error: err instanceof Error ? err.message : String(err),
+    };
+  }
+}
+
 // ---------------------------------------------------------------------------
 // verifyDataProof — real ed25519 signature verification
 //
-// Verification logic:
-//   1. Basic structure checks (provider, parameters, timestamp, witnesses)
-//   2. Serialize claimData canonically → sha256 hash
-//   3. Verify each witness signature against the hash
-//   4. If ATTESTOR_PUBLIC_KEYS is set, require signatures from known attestors
-//   5. Otherwise, accept any valid ed25519 signature (dev mode)
+// Verification pipeline:
+//   1. Structure checks (provider, parameters, timestamp, witnesses)
+//   2. Freshness check (timestamp within ±7 days)
+//   3. Serialize claimData canonically → sha256 hash
+//   4. Verify each witness ed25519 signature against the hash
+//   5. If ATTESTOR_PUBLIC_KEYS is set → require ≥1 signature from known keys
+//   6. If not set (dev mode) → accept any valid ed25519 signature
+//
+// This function is called by the facilitator API at POST /api/proofs/submit.
+// The attestor-core signs claimData; this function validates those signatures.
 // ---------------------------------------------------------------------------
 
 export async function verifyDataProof(proof: ReclaimProof): Promise<boolean> {
@@ -118,10 +162,10 @@ export async function verifyDataProof(proof: ReclaimProof): Promise<boolean> {
   }
 
   // ---------------------------------------------------------------------------
-  // Cryptographic verification
+  // Cryptographic verification — ed25519 over sha256(canonicalClaimData)
   // ---------------------------------------------------------------------------
 
-  // Canonical serialization of claimData for signature verification
+  // Canonical serialization (deterministic field order)
   const claimDataCanonical = JSON.stringify({
     provider: data.provider,
     parameters: data.parameters,
@@ -145,56 +189,59 @@ export async function verifyDataProof(proof: ReclaimProof): Promise<boolean> {
     const sigHex = proof.signatures[i];
     if (!sigHex || typeof sigHex !== "string") continue;
 
-    // Get corresponding witness public key
+    // Corresponding witness public key
     const witness = proof.witnesses[i];
     if (!witness?.id) continue;
 
-    // Witness ID is expected to be a hex-encoded ed25519 public key
-    // or prefixed with "0x"
-    const witnessKey = witness.id.startsWith("0x")
+    // Witness ID = hex-encoded ed25519 public key (optionally 0x-prefixed)
+    const witnessKey = (witness.id.startsWith("0x")
       ? witness.id.slice(2)
-      : witness.id;
+      : witness.id
+    ).toLowerCase();
 
     try {
       const sigBytes = hexToBytes(sigHex.startsWith("0x") ? sigHex.slice(2) : sigHex);
       const pubKeyBytes = hexToBytes(witnessKey);
 
-      // Verify ed25519 signature over the sha256 hash of claimData
+      // ed25519 verify: signature over sha256(claimData) with witness pubkey
       const isValid = ed25519.verify(sigBytes, messageHash, pubKeyBytes);
       if (isValid) {
         validSignatureCount++;
-        if (requireKnownAttestors && knownAttestorKeys.includes(witnessKey.toLowerCase())) {
+        if (requireKnownAttestors && knownAttestorKeys.includes(witnessKey)) {
           knownAttestorSignatures++;
         }
       }
     } catch {
-      // Invalid signature format — skip
+      // Invalid signature format — skip this witness
       continue;
     }
   }
 
-  // In production (ATTESTOR_PUBLIC_KEYS set): require at least one known attestor signature
+  // ── Production mode (ATTESTOR_PUBLIC_KEYS set) ──
+  // Require at least one valid signature from a known attestor.
+  // This prevents forged proofs from unknown attestors.
   if (requireKnownAttestors) {
     if (knownAttestorSignatures === 0) {
       console.warn(
-        `[reclaim] No valid signatures from known attestors. ` +
-        `Valid signatures: ${validSignatureCount}, known attestor sigs: 0. ` +
-        `Message hash: ${messageHex}`
+        `[reclaim] REJECTED — no signatures from known attestors. ` +
+        `Valid sigs: ${validSignatureCount}, known attestor sigs: 0. ` +
+        `Hash: ${messageHex}. ` +
+        `Known keys: ${knownAttestorKeys.length}`
       );
       return false;
     }
     return true;
   }
 
-  // In dev mode (no ATTESTOR_PUBLIC_KEYS): accept any valid signature
-  // but still require at least one valid sig
+  // ── Dev mode (no ATTESTOR_PUBLIC_KEYS) ──
+  // Accept any valid ed25519 signature. Log warning.
   if (validSignatureCount === 0) {
     console.warn(
-      `[reclaim] No valid ed25519 signatures found. ` +
-      `Dev mode (no ATTESTOR_PUBLIC_KEYS). ` +
-      `Falling back to structure-only validation.`
+      `[reclaim] DEV MODE — no valid ed25519 signatures found. ` +
+      `Accepting based on structure only (set ATTESTOR_PUBLIC_KEYS for production). ` +
+      `Hash: ${messageHex}`
     );
-    // Dev fallback: accept if structure is valid (backward compat)
+    // Dev fallback: accept if structure is valid
     return true;
   }
 
@@ -202,10 +249,18 @@ export async function verifyDataProof(proof: ReclaimProof): Promise<boolean> {
 }
 
 // ---------------------------------------------------------------------------
-// createApiProof — generic proof for any web API
+// createApiProof — generic ZK-TLS proof for any web API
 //
-// Use this for any API that returns JSON data. The attestor verifies the TLS
-// session and produces a ZK proof that the response matches the given pattern.
+// Flow:
+//   1. Provider calls createApiProof({ apiUrl, accessToken, ... })
+//   2. ReclaimClient.zkFetch connects to attestor-core (self-hosted)
+//   3. Attestor opens a TLS session to the target API
+//   4. Attestor witnesses the response, hashes it, signs with ed25519
+//   5. Returns ReclaimProof { claimData, signatures, witnesses }
+//   6. Provider submits proof to POST /api/proofs/submit
+//
+// The attestor URL is configured via ATTESTOR_URL env var.
+// For production, deploy attestor-core on your own server.
 // ---------------------------------------------------------------------------
 
 export async function createApiProof(opts: {
@@ -215,8 +270,13 @@ export async function createApiProof(opts: {
   responseMatch: string;
   metric: string;
 }): Promise<ProofResult> {
-  const appId = process.env.RECLAIM_APP_ID ?? "";
-  const appSecret = process.env.RECLAIM_APP_SECRET ?? "";
+  const attestorUrl = getAttestorUrl();
+
+  // ReclaimClient with self-hosted attestor — no APP_ID needed
+  // When using attestor-core, APP_ID/APP_SECRET are optional identifiers.
+  // The attestor itself handles TLS witnessing without Reclaim's hosted infra.
+  const appId = process.env.RECLAIM_APP_ID ?? "self-hosted";
+  const appSecret = process.env.RECLAIM_APP_SECRET ?? "self-hosted";
   const client = new ReclaimClient(appId, appSecret);
 
   const reqHeaders: Record<string, string> = {
@@ -226,7 +286,7 @@ export async function createApiProof(opts: {
     reqHeaders["Authorization"] = `Bearer ${opts.accessToken}`;
   }
 
-  // Headers to redact from proof (keep auth secret)
+  // Headers to redact from proof (keep auth tokens secret)
   const secretHeaders: Record<string, string> = {};
   if (opts.accessToken) {
     secretHeaders["Authorization"] = `Bearer ${opts.accessToken}`;
@@ -250,19 +310,37 @@ export async function createApiProof(opts: {
       }
     );
 
+    if (!proof) {
+      return {
+        success: false,
+        proof: null,
+        metric: opts.metric,
+        createdAt: new Date().toISOString(),
+        error: `Attestor returned empty proof (attestor: ${attestorUrl})`,
+      };
+    }
+
     return {
-      success: !!proof,
+      success: true,
       proof: proof as unknown as ReclaimProof,
       metric: opts.metric,
       createdAt: new Date().toISOString(),
     };
   } catch (err) {
+    const errorMsg = err instanceof Error ? err.message : String(err);
+    const isConnectionError =
+      errorMsg.includes("ECONNREFUSED") ||
+      errorMsg.includes("fetch failed") ||
+      errorMsg.includes("ETIMEDOUT");
+
     return {
       success: false,
       proof: null,
       metric: opts.metric,
       createdAt: new Date().toISOString(),
-      error: err instanceof Error ? err.message : String(err),
+      error: isConnectionError
+        ? `Cannot reach attestor at ${attestorUrl} — is attestor-core running? (${errorMsg})`
+        : errorMsg,
     };
   }
 }

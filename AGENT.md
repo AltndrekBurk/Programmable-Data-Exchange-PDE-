@@ -1,7 +1,7 @@
 # AGENT.md — OpenClaw Integration for dataEconomy
 
-**Version**: 1.0
-**Last Updated**: 2026-03-01
+**Version**: 2.0
+**Last Updated**: 2026-03-09
 **Target**: OpenClaw self-hosted AI gateway users
 
 ---
@@ -69,9 +69,11 @@ DISCORD_BOT_TOKEN=<your-discord-token>
 STELLAR_PLATFORM_ACCOUNT=<platform-public-address>
 STELLAR_TESTNET_URL=https://horizon-testnet.stellar.org
 
-# Reclaim Protocol (for ZK proofs)
-RECLAIM_APP_ID=<your-reclaim-app-id>
-RECLAIM_APP_SECRET=<your-reclaim-app-secret>
+# ZK-TLS (self-hosted attestor-core — no APP_ID needed)
+ATTESTOR_URL=http://localhost:8001
+# Optional: Reclaim hosted fallback (not required with self-hosted attestor)
+# RECLAIM_APP_ID=<your-reclaim-app-id>
+# RECLAIM_APP_SECRET=<your-reclaim-app-secret>
 
 # Start the gateway
 npm run dev
@@ -373,6 +375,66 @@ For new data sources (e.g., Plaid, Google Fit, Garmin), create a template:
   }
 }
 ```
+
+---
+
+## ZK-TLS Setup: Self-Hosted Attestor-Core
+
+Before generating proofs, you need a running attestor-core instance. The attestor acts as a TLS witness — it independently connects to the source API, observes the response, and signs a claim with its ed25519 private key.
+
+### Deploy Attestor-Core
+
+```bash
+# Clone and install
+git clone https://github.com/reclaimprotocol/attestor-core
+cd attestor-core && npm install
+
+# Generate ed25519 keypair
+node -e "
+const { generateKeyPairSync } = require('crypto');
+const kp = generateKeyPairSync('ed25519');
+console.log('PRIVATE_KEY=' + kp.privateKey.export({type:'pkcs8',format:'der'}).toString('hex'));
+console.log('PUBLIC_KEY=' + kp.publicKey.export({type:'spki',format:'der'}).toString('hex'));
+"
+
+# Set private key in .env
+echo "PRIVATE_KEY=<private-key-hex-from-above>" > .env
+
+# Start (port 8001)
+npm run start:tsc
+```
+
+### Configure OpenClaw
+
+In your OpenClaw `.env`:
+```env
+ATTESTOR_URL=http://localhost:8001  # or your remote attestor address
+```
+
+### Configure Platform API
+
+In the dataEconomy platform `.env`:
+```env
+ATTESTOR_PUBLIC_KEYS=<public-key-hex-from-above>
+```
+
+The platform will only accept proofs signed by attestors whose public keys are listed in `ATTESTOR_PUBLIC_KEYS`.
+
+### How It Works
+
+```
+OpenClaw → zkFetch(apiUrl) → Attestor-Core → Source API (Fitbit/Strava)
+                                    │
+                              TLS Witness:
+                              - Opens own TLS connection
+                              - Reads raw response
+                              - Signs sha256(claimData) with ed25519
+                              - Returns proof with signature
+                                    │
+                              ← ReclaimProof { claimData, signatures[], witnesses[] }
+```
+
+The attestor **never stores** raw data. It only signs a hash of what it saw.
 
 ---
 
@@ -736,6 +798,7 @@ A: Yes! Create a custom-provider tool following the template. Ensure the API end
 
 ## Version History
 
+- **v2.0** (2026-03-09) — Added self-hosted attestor-core setup, ZK-TLS architecture, ed25519 keypair generation, attestor health check.
 - **v1.0** (2026-03-01) — Initial OpenClaw integration guide. Covers consent flow, MCP tools, proof generation, X402 payment, Horizon SSE listener.
 
 ---

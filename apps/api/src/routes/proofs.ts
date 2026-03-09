@@ -73,7 +73,12 @@ export function createProofsRouter(storage: StorageService, escrow: EscrowAdapte
 
     const isValid = await verifyDataProof(body.proof)
     if (!isValid) {
-      return c.json({ error: 'ZK proof verification failed' }, 400)
+      const witnessKeys = body.proof.witnesses.map((w) => w.id.slice(0, 16) + '...')
+      return c.json({
+        error: 'ZK proof verification failed',
+        detail: 'ed25519 witness signature validation failed. Check ATTESTOR_PUBLIC_KEYS.',
+        witnesses: witnessKeys,
+      }, 400)
     }
 
     if (body.proof.witnesses.length < skillPolicy.minWitnessCount) {

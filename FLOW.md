@@ -45,15 +45,26 @@ Last updated: 2026-03-09 (v2.0)
    - Goes through API because Soroban `deposit()` requires the platform's keypair.
    - Contract records `timeout_at` for automatic expiry protection.
 
-### Phase 4: Data Collection & Proof Generation (Provider/OpenClaw)
-10. OpenClaw bot (or provider manually) fetches data from source API (e.g., Fitbit REST API).
-11. ZK-TLS proof generated via Reclaim Protocol `zkFetch` — ed25519 witness signatures cryptographically prove TLS session authenticity.
-12. Payload encrypted using buyer's `deliveryPublicKey` from skill metadata. Facilitator **never** sees plaintext.
+### Phase 4: Data Collection & ZK-TLS Proof Generation (Provider/OpenClaw)
+10. OpenClaw bot (or provider manually) calls `createApiProof()` which internally uses `zkFetch()`.
+11. `zkFetch()` routes the API request through **attestor-core** (self-hosted TLS witness):
+    - Attestor opens its own TLS connection to the source API (e.g., Fitbit).
+    - Attestor witnesses the raw response (provider cannot modify it).
+    - Attestor hashes the response, signs `{ url, responseHash, timestamp }` with ed25519 private key.
+    - Returns `ReclaimProof` with `claimData` + `signatures[]` + `witnesses[]`.
+12. Provider encrypts the data payload using buyer's `deliveryPublicKey` from skill metadata.
+    - Facilitator **never** sees plaintext data.
 
 ### Phase 5: Proof Submission & Verification (Facilitator)
 13. Provider submits to `POST /api/proofs/submit` with proof + encrypted payload.
 14. x402 middleware validates Stellar USDC payment header (0.01 USDC spam fee via OpenZeppelin Relayer).
-15. Facilitator runs proof verification: ed25519 witness signature validation, freshness check, replay protection.
+15. Facilitator runs `verifyDataProof()`:
+    - Canonical JSON serialization of `claimData` → sha256 hash.
+    - ed25519 signature verification for each witness.
+    - If `ATTESTOR_PUBLIC_KEYS` set: require signature from known attestor (production).
+    - If not set: accept any valid ed25519 signature (dev mode).
+    - Freshness check: timestamp within ±7 days.
+    - Replay protection: same proofHash cannot be submitted twice.
 16. Proof linked to escrow via `set_proof(proof_cid, proof_hash)` on Soroban contract — required before release.
 17. Encrypted payload forwarded to buyer's callback URL with integrity metadata (proofHash, checksum).
 
@@ -110,7 +121,47 @@ Key functions in `lib/chain-reader.ts`:
 - `readMarketplaceMcps()` — MCP standards with volume data
 - `readMcpById(id)` — Single MCP detail
 
-## 7) Status Summary (MVP)
+## 7) ZK-TLS Verification Pipeline
+
+### Components
+
+| Component | Role | Location |
+|-----------|------|----------|
+| **attestor-core** | TLS witness — observes API responses, signs claims with ed25519 | Self-hosted (port 8001) |
+| **Reclaim SDK** | `zkFetch()` — routes requests through attestor, returns proof | Provider/OpenClaw |
+| **verifyDataProof()** | Validates ed25519 signatures against known attestor public keys | `packages/reclaim/src/index.ts` |
+| **set_proof()** | Links verified proof hash to escrow on-chain | Soroban contract |
+
+### Why Data Cannot Be Forged
+
+1. The attestor independently opens a TLS connection to the source API.
+2. The provider never gets to see or modify what the attestor signs.
+3. The attestor signs `sha256(canonicalClaimData)` with its ed25519 private key.
+4. The platform knows the attestor's public key (`ATTESTOR_PUBLIC_KEYS` env).
+5. If the signature doesn't match a known attestor → proof rejected.
+
+### Attestor-Core Setup
+
+```bash
+git clone https://github.com/reclaimprotocol/attestor-core
+cd attestor-core && npm install
+# Generate ed25519 keypair or use existing
+echo "PRIVATE_KEY=<ed25519-private-key-hex>" > .env
+npm run start:tsc   # Listens on port 8001
+```
+
+Platform `.env`:
+```
+ATTESTOR_URL=http://your-attestor:8001
+ATTESTOR_PUBLIC_KEYS=<hex-pubkey-1>,<hex-pubkey-2>
+```
+
+### Verification Modes
+
+- **Production** (`ATTESTOR_PUBLIC_KEYS` set): Only proofs signed by known attestors accepted.
+- **Development** (no keys): Any valid ed25519 signature accepted (structure-only fallback).
+
+## 8) Status Summary (MVP)
 
 ### Completed
 - Frontend-first publish flow (IPFS + Stellar from browser).

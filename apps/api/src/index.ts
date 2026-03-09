@@ -25,6 +25,7 @@ import { createEscrowRouter } from './routes/escrow.js'
 import { createDashboardRouter } from './routes/dashboard.js'
 import { createNotifyRouter } from './routes/notify.js'
 import { createStorageService, createEscrowAdapter } from '@dataeconomy/storage'
+import { checkAttestorHealth } from '@dataeconomy/reclaim'
 const isProd = process.env.NODE_ENV === 'production'
 const corsOrigin = process.env.CORS_ORIGIN ?? '*'
 
@@ -43,11 +44,20 @@ const app = new Hono()
 app.use('*', cors({ origin: corsOrigin }))
 app.use('*', logger())
 
-app.get('/health', (c) => c.json({
-  status: 'ok',
-  storageMode: 'ipfs+stellar',
-  timestamp: new Date().toISOString(),
-}))
+app.get('/health', async (c) => {
+  const attestor = await checkAttestorHealth()
+  return c.json({
+    status: 'ok',
+    storageMode: 'ipfs+stellar',
+    zkTls: {
+      attestorUrl: attestor.url,
+      attestorHealthy: attestor.healthy,
+      attestorError: attestor.error,
+      knownAttestorKeys: (process.env.ATTESTOR_PUBLIC_KEYS ?? '').split(',').filter(Boolean).length,
+    },
+    timestamp: new Date().toISOString(),
+  })
+})
 
 // Static routers (no storage dependency)
 app.route('/api/auth', authRouter)
