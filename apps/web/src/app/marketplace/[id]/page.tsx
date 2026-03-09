@@ -6,6 +6,8 @@ import { useSession } from "next-auth/react";
 import Link from "next/link";
 import { apiFetch } from "@/lib/api";
 import Button from "@/components/ui/Button";
+import { readMcpById } from "@/lib/chain-reader";
+import { fetchFromIpfs } from "@/lib/ipfs";
 
 interface McpDetail {
   id: string;
@@ -60,26 +62,43 @@ export default function McpDetailPage() {
   const [ratingReason, setRatingReason] = useState("");
   const [submittingRating, setSubmittingRating] = useState(false);
 
+  /* Chain-first: read MCP detail from Stellar + IPFS */
   useEffect(() => {
     if (!id) return;
 
-    Promise.all([
-      apiFetch<McpDetail>(`/api/marketplace/${id}`),
-      apiFetch<{ reviews: Review[] }>(`/api/marketplace/${id}/reviews`).catch(() => ({ reviews: [] })),
-    ])
-      .then(([mcpData, reviewData]) => {
-        setMcp(mcpData);
-        setReviews(reviewData.reviews || []);
+    (async () => {
+      try {
+        const entry = await readMcpById(id);
+        if (!entry?.data) {
+          setError("MCP not found on-chain");
+          setLoading(false);
+          return;
+        }
 
-        // Fetch IPFS data if hash exists
-        if (mcpData.ipfsHash) {
-          apiFetch<Record<string, unknown>>(`/api/ipfs/${mcpData.ipfsHash}`)
+        const mcpData = {
+          ...entry.data,
+          id: entry.data.id || id,
+          ipfsHash: entry.cid,
+        } as McpDetail;
+        setMcp(mcpData);
+
+        // Resolve full IPFS document
+        if (entry.cid) {
+          fetchFromIpfs<Record<string, unknown>>(entry.cid)
             .then(setIpfsData)
             .catch(() => setIpfsData(null));
         }
-      })
-      .catch((err) => setError(err instanceof Error ? err.message : "Failed to load"))
-      .finally(() => setLoading(false));
+
+        // Reviews still come from backend (rating data may be off-chain)
+        apiFetch<{ reviews: Review[] }>(`/api/marketplace/${id}/reviews`)
+          .then((data) => setReviews(data.reviews || []))
+          .catch(() => setReviews([]));
+      } catch (err) {
+        setError(err instanceof Error ? err.message : "Failed to load");
+      } finally {
+        setLoading(false);
+      }
+    })();
   }, [id]);
 
   const handleRate = async () => {

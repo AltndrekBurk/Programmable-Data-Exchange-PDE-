@@ -3,27 +3,12 @@
 import { useState, useEffect } from "react";
 import { useSession } from "next-auth/react";
 import { useRouter } from "next/navigation";
-import { apiFetch } from "@/lib/api";
-
-interface EscrowEntry {
-  id: string;
-  skillId: string;
-  title: string;
-  totalBudget: string;
-  locked: string;
-  released: string;
-  providerShare: string;
-  platformShare: string;
-  disputePool: string;
-  status: "locked" | "releasing" | "released" | "disputed" | "refunded";
-  createdAt: string;
-  txHash?: string;
-}
+import { readUserEscrows, type ChainEntry, type EscrowData } from "@/lib/chain-reader";
 
 export default function EscrowPage() {
   const { data: session, status } = useSession();
   const router = useRouter();
-  const [escrows, setEscrows] = useState<EscrowEntry[]>([]);
+  const [escrows, setEscrows] = useState<ChainEntry<EscrowData>[]>([]);
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
@@ -33,11 +18,13 @@ export default function EscrowPage() {
     }
     if (status !== "authenticated") return;
 
-    const address = session?.user?.stellarAddress;
-    const query = address ? `?address=${address}` : "";
+    const address = (session?.user as { stellarAddress?: string })?.stellarAddress;
+    const pseudoId = (session?.user as { pseudoId?: string })?.pseudoId;
+    if (!address || !pseudoId) return;
 
-    apiFetch<{ escrows: EscrowEntry[] }>(`/api/escrow/list${query}`)
-      .then((data) => setEscrows(data.escrows || []))
+    // Read directly from Stellar Horizon + IPFS — no backend call
+    readUserEscrows(pseudoId, address)
+      .then((data) => setEscrows(data))
       .catch(() => setEscrows([]))
       .finally(() => setLoading(false));
   }, [status, router, session]);
@@ -62,10 +49,10 @@ export default function EscrowPage() {
     );
   }
 
-  const totalLocked = escrows.reduce((sum, e) => sum + parseFloat(e.locked || "0"), 0);
-  const totalReleased = escrows.reduce((sum, e) => sum + parseFloat(e.released || "0"), 0);
-  const totalBudget = escrows.reduce((sum, e) => sum + parseFloat(e.totalBudget || "0"), 0);
-  const activeCount = escrows.filter((e) => e.status === "locked").length;
+  const totalLocked = escrows.reduce((sum, e) => sum + (e.data?.locked || 0), 0);
+  const totalReleased = escrows.reduce((sum, e) => sum + (e.data?.released || 0), 0);
+  const totalBudget = escrows.reduce((sum, e) => sum + (e.data?.totalBudget || 0), 0);
+  const activeCount = escrows.filter((e) => e.data?.status === "locked").length;
 
   return (
     <div className="mx-auto max-w-4xl px-4 py-10 space-y-8">
@@ -74,6 +61,7 @@ export default function EscrowPage() {
         <h1 className="mt-3 text-3xl font-bold text-slate-100">Escrow Status</h1>
         <p className="mt-2 text-sm text-slate-400">
           USDC escrow managed by Soroban smart contract on Stellar. Atomic 3-way release on verified proof.
+          Data read directly from Stellar Horizon + IPFS.
         </p>
       </div>
 
@@ -125,35 +113,53 @@ export default function EscrowPage() {
         <div className="space-y-3">
           {escrows.map((entry) => (
             <div
-              key={entry.id}
+              key={entry.key}
               className="flow-surface rounded-xl p-5 transition-all hover:border-slate-600"
             >
               <div className="flex items-center justify-between mb-3">
-                <h3 className="text-sm font-semibold text-slate-100">{entry.title}</h3>
-                <span className={`flow-status-badge ${entry.status}`}>
-                  {entry.status}
+                <div className="flex items-center gap-2">
+                  <h3 className="text-sm font-semibold text-slate-100">
+                    {entry.data?.title || entry.key}
+                  </h3>
+                  <span
+                    className={`rounded-full px-1.5 py-0.5 text-[10px] border ${
+                      entry.ipfsResolved
+                        ? "border-emerald-500/30 text-emerald-300"
+                        : "border-slate-600 text-slate-400"
+                    }`}
+                  >
+                    {entry.ipfsResolved ? "IPFS" : "CID only"}
+                  </span>
+                </div>
+                <span className={`flow-status-badge ${entry.data?.status || "locked"}`}>
+                  {entry.data?.status || "indexed"}
                 </span>
               </div>
               <div className="flex flex-wrap gap-4 text-sm text-slate-400">
-                <span>Budget: <span className="text-slate-200">{entry.totalBudget} USDC</span></span>
-                <span>Locked: <span className="text-cyan-300">{entry.locked} USDC</span></span>
-                <span>Released: <span className="text-emerald-300">{entry.released} USDC</span></span>
+                <span>Budget: <span className="text-slate-200">{entry.data?.totalBudget || 0} USDC</span></span>
+                <span>Locked: <span className="text-cyan-300">{entry.data?.locked || 0} USDC</span></span>
+                <span>Released: <span className="text-emerald-300">{entry.data?.released || 0} USDC</span></span>
               </div>
-              {entry.status === "released" && (
+              {entry.data?.status === "released" && (
                 <div className="flex gap-4 text-xs text-slate-500 mt-2 pt-2 border-t border-slate-800">
-                  <span>Provider: {entry.providerShare} USDC</span>
-                  <span>Platform: {entry.platformShare} USDC</span>
-                  <span>Dispute: {entry.disputePool} USDC</span>
+                  <span>Provider: {entry.data.providerShare} USDC</span>
+                  <span>Platform: {entry.data.platformShare} USDC</span>
+                  <span>Dispute: {entry.data.disputePool} USDC</span>
                 </div>
               )}
               <div className="flex items-center justify-between mt-3 pt-2 border-t border-slate-800">
-                <span className="text-xs text-slate-500">
-                  {new Date(entry.createdAt).toLocaleString("en-US")}
+                <span className="text-xs text-slate-500 font-mono">
+                  CID: {entry.cid.slice(0, 20)}...
                 </span>
-                {entry.txHash && (
-                  <span className="text-xs text-slate-500 font-mono">
-                    TX: {entry.txHash.slice(0, 16)}...
-                  </span>
+                {entry.data?.depositTxHash && (
+                  <a
+                    href={`https://stellar.expert/explorer/testnet/tx/${entry.data.depositTxHash}`}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="text-xs text-emerald-400 hover:underline"
+                  >
+                    View TX
+                  </a>
                 )}
               </div>
             </div>

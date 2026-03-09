@@ -7,91 +7,17 @@ import Link from "next/link";
 import { apiFetch } from "@/lib/api";
 import Button from "@/components/ui/Button";
 import { useFreighter } from "@/hooks/useFreighter";
-
-/* ─── Types from chain-state API ─── */
-interface ChainSkill {
-  key: string;
-  cid: string;
-  title?: string;
-  dataSource?: string;
-  rewardPerUser?: number;
-  status?: string;
-  createdAt?: string;
-  ipfsResolved: boolean;
-}
-
-interface ChainEscrow {
-  key: string;
-  cid: string;
-  title?: string;
-  totalBudget?: number;
-  locked?: number;
-  released?: number;
-  status?: string;
-  txHash?: string;
-  ipfsResolved: boolean;
-}
-
-interface ChainProof {
-  key: string;
-  cid: string;
-  proofHash?: string;
-  skillId?: string;
-  metric?: string;
-  status?: string;
-  timestamp?: string;
-  ipfsResolved: boolean;
-}
-
-interface ConsentTask {
-  key: string;
-  cid: string;
-  skillId?: string;
-  title?: string;
-  description?: string;
-  dataSource?: string;
-  metrics?: string[];
-  rewardPerUser?: number;
-  durationDays?: number;
-  totalBudget?: number;
-  policy?: any;
-  ipfsResolved: boolean;
-}
-
-interface ProviderStatus {
-  registered: boolean;
-  cid?: string;
-  dataSources?: string[];
-  policy?: any;
-  openclawUrl?: string;
-  status?: string;
-}
-
-interface ChainState {
-  onChain: boolean;
-  platformAddress?: string;
-  userPseudoId?: string;
-  stellarIndexCount?: number;
-  summary?: {
-    totalSkills: number;
-    totalProofs: number;
-    totalProviders: number;
-    totalEscrows: number;
-    totalMcps: number;
-  };
-  userSkills: ChainSkill[];
-  userEscrows: ChainEscrow[];
-  userProofs: ChainProof[];
-  pendingConsent: ConsentTask[];
-  providerStatus: ProviderStatus;
-}
+import {
+  readDashboardState,
+  type DashboardChainState,
+} from "@/lib/chain-reader";
 
 export default function DashboardPage() {
   const { data: session, status } = useSession();
   const router = useRouter();
   const freighter = useFreighter();
 
-  const [chainState, setChainState] = useState<ChainState | null>(null);
+  const [chainState, setChainState] = useState<DashboardChainState | null>(null);
   const [loading, setLoading] = useState(true);
   const [chainError, setChainError] = useState<string | null>(null);
 
@@ -122,29 +48,23 @@ export default function DashboardPage() {
     if (status === "unauthenticated") router.push("/login");
   }, [status, router]);
 
-  /* ── Load on-chain state ── */
+  /* ── Load on-chain state directly from Stellar Horizon + IPFS ── */
   useEffect(() => {
     if (status !== "authenticated" || !stellarAddress) return;
 
-    const apiUrl = process.env.NEXT_PUBLIC_API_URL || "http://localhost:3001";
+    const pseudoId = (session?.user as { pseudoId?: string })?.pseudoId;
+    if (!pseudoId) return;
 
-    fetch(`${apiUrl}/api/dashboard/chain-state?address=${stellarAddress}`)
-      .then((res) => res.json())
+    readDashboardState(pseudoId, stellarAddress)
       .then((data) => {
-        if (data.error) {
-          setChainError(data.error);
-          setChainState(null);
-        } else {
-          setChainState(data);
-          // Pre-fill bot config from provider data
-          if (data.providerStatus?.openclawUrl) {
-            setBotUrl(data.providerStatus.openclawUrl);
-          }
+        setChainState(data);
+        if (data.providerStatus?.openclawUrl) {
+          setBotUrl(data.providerStatus.openclawUrl);
         }
       })
-      .catch((err) => setChainError(err.message))
+      .catch((err) => setChainError(err instanceof Error ? err.message : String(err)))
       .finally(() => setLoading(false));
-  }, [status, stellarAddress]);
+  }, [status, stellarAddress, session]);
 
   /* ── Derive escrow events from chain state ── */
   useEffect(() => {
@@ -156,17 +76,17 @@ export default function DashboardPage() {
           type: "deposited",
           escrowId: e.key,
           timestamp: "",
-          detail: `${e.totalBudget || 0} USDC locked`,
+          detail: `${e.data?.totalBudget || 0} USDC locked`,
         });
-        if (e.status === "released") {
+        if (e.data?.status === "released") {
           evts.push({
             type: "released",
             escrowId: e.key,
             timestamp: "",
-            detail: `${e.released || 0} USDC released (70/20/10)`,
+            detail: `${e.data?.released || 0} USDC released (70/20/10)`,
           });
         }
-        if (e.status === "disputed") {
+        if (e.data?.status === "disputed") {
           evts.push({
             type: "disputed",
             escrowId: e.key,
@@ -174,12 +94,12 @@ export default function DashboardPage() {
             detail: "Escrow under dispute",
           });
         }
-        if (e.status === "refunded") {
+        if (e.data?.status === "refunded") {
           evts.push({
             type: "refunded",
             escrowId: e.key,
             timestamp: "",
-            detail: `${e.totalBudget || 0} USDC refunded`,
+            detail: `${e.data?.totalBudget || 0} USDC refunded`,
           });
         }
         return evts;
@@ -225,7 +145,7 @@ export default function DashboardPage() {
         prev
           ? {
               ...prev,
-              pendingConsent: prev.pendingConsent.filter((c) => c.skillId !== skillId),
+              pendingConsent: prev.pendingConsent.filter((c) => c.data?.id !== skillId),
             }
           : prev
       );
@@ -297,12 +217,12 @@ export default function DashboardPage() {
 
   /* ── Computed values ── */
   const cs = chainState;
-  const totalLocked = cs?.userEscrows.reduce((sum, e) => sum + (e.locked || 0), 0) || 0;
-  const totalReleased = cs?.userEscrows.reduce((sum, e) => sum + (e.released || 0), 0) || 0;
-  const verifiedProofs = cs?.userProofs.filter((p) => p.status === "verified").length || 0;
+  const totalLocked = cs?.userEscrows.reduce((sum, e) => sum + (e.data?.locked || 0), 0) || 0;
+  const totalReleased = cs?.userEscrows.reduce((sum, e) => sum + (e.data?.released || 0), 0) || 0;
+  const verifiedProofs = cs?.userProofs.filter((p) => p.data?.status === "verified").length || 0;
   const totalProofs = cs?.userProofs.length || 0;
   const proofSuccessRate = totalProofs > 0 ? (verifiedProofs / totalProofs) * 100 : 0;
-  const totalSettlements = cs?.userEscrows.filter((e) => e.status === "released").length || 0;
+  const totalSettlements = cs?.userEscrows.filter((e) => e.data?.status === "released").length || 0;
 
   return (
     <div className="mx-auto max-w-6xl px-4 py-10 space-y-8">
@@ -406,12 +326,12 @@ export default function DashboardPage() {
           </div>
           <div className="divide-y divide-slate-800">
             {cs!.pendingConsent.map((task) => (
-              <div key={task.skillId || task.key} className="p-4">
+              <div key={task.data?.id || task.key} className="p-4">
                 <div className="flex items-start justify-between gap-4">
                   <div className="min-w-0 flex-1">
                     <div className="flex items-center gap-2">
                       <h3 className="text-sm font-semibold text-slate-100 truncate">
-                        {task.title || "Untitled Program"}
+                        {task.data?.title || "Untitled Program"}
                       </h3>
                       {task.ipfsResolved && (
                         <span className="shrink-0 rounded-full bg-emerald-500/10 border border-emerald-500/30 px-1.5 py-0.5 text-[10px] text-emerald-300">
@@ -420,22 +340,22 @@ export default function DashboardPage() {
                       )}
                     </div>
                     <p className="mt-1 text-xs text-slate-400">
-                      {task.dataSource} | {(task.metrics || []).slice(0, 4).join(", ")} |{" "}
+                      {task.data?.dataSource} | {(task.data?.metrics || []).slice(0, 4).join(", ")} |{" "}
                       <span className="font-medium text-emerald-300">
-                        {task.rewardPerUser} USDC/epoch
+                        {task.data?.rewardPerUser} USDC/epoch
                       </span>
                     </p>
-                    {task.description && (
+                    {task.data?.description && (
                       <p className="mt-1 text-xs text-slate-500 line-clamp-2">
-                        {task.description.split("\n")[0]}
+                        {task.data.description.split("\n")[0]}
                       </p>
                     )}
                     <div className="mt-2 flex flex-wrap gap-2 text-[10px] text-slate-500">
-                      <span>Duration: {task.durationDays}d</span>
-                      <span>Budget: {task.totalBudget} USDC</span>
+                      <span>Duration: {task.data?.durationDays}d</span>
+                      <span>Budget: {task.data?.totalBudget} USDC</span>
                       <span>CID: {task.cid.slice(0, 12)}...</span>
-                      {task.policy?.maxProofAgeHours && (
-                        <span>Proof age: {task.policy.maxProofAgeHours}h</span>
+                      {task.data?.policy?.maxProofAgeHours != null && (
+                        <span>Proof age: {String(task.data.policy.maxProofAgeHours)}h</span>
                       )}
                     </div>
                   </div>
@@ -444,8 +364,8 @@ export default function DashboardPage() {
                       size="sm"
                       variant="primary"
                       disabled={consentLoading !== null}
-                      isLoading={consentLoading === task.skillId}
-                      onClick={() => task.skillId && handleConsent(task.skillId, "ACCEPT")}
+                      isLoading={consentLoading === task.data?.id}
+                      onClick={() => task.data?.id && handleConsent(task.data.id, "ACCEPT")}
                     >
                       Accept
                     </Button>
@@ -453,7 +373,7 @@ export default function DashboardPage() {
                       size="sm"
                       variant="outline"
                       disabled={consentLoading !== null}
-                      onClick={() => task.skillId && handleConsent(task.skillId, "REJECT")}
+                      onClick={() => task.data?.id && handleConsent(task.data.id, "REJECT")}
                     >
                       Reject
                     </Button>
@@ -489,7 +409,7 @@ export default function DashboardPage() {
                     <div className="min-w-0">
                       <div className="flex items-center gap-2">
                         <p className="text-sm font-semibold text-slate-100 truncate">
-                          {skill.title || skill.key}
+                          {skill.data?.title || skill.key}
                         </p>
                         <span
                           className={`rounded-full px-1.5 py-0.5 text-[10px] border ${
@@ -502,12 +422,12 @@ export default function DashboardPage() {
                         </span>
                       </div>
                       <p className="mt-1 text-xs text-slate-500">
-                        {skill.dataSource || "—"} | {skill.rewardPerUser || 0} USDC/epoch |
+                        {skill.data?.dataSource || "—"} | {skill.data?.rewardPerUser || 0} USDC/epoch |
                         CID: <span className="font-mono">{skill.cid.slice(0, 16)}...</span>
                       </p>
                     </div>
-                    <span className={`flow-status-badge ${skill.status || "active"}`}>
-                      {skill.status || "indexed"}
+                    <span className={`flow-status-badge ${skill.data?.status || "active"}`}>
+                      {skill.data?.status || "indexed"}
                     </span>
                   </div>
                 </div>
@@ -654,19 +574,19 @@ export default function DashboardPage() {
                   <div className="flex items-center justify-between">
                     <div className="min-w-0">
                       <p className="text-sm font-medium text-slate-100 truncate">
-                        {entry.title || entry.key}
+                        {entry.data?.title || entry.key}
                       </p>
                       <p className="mt-1 text-xs text-slate-500">
-                        Budget: {entry.totalBudget || 0} USDC | Locked: {entry.locked || 0} |
-                        Released: {entry.released || 0}
+                        Budget: {entry.data?.totalBudget || 0} USDC | Locked: {entry.data?.locked || 0} |
+                        Released: {entry.data?.released || 0}
                       </p>
                       <p className="mt-0.5 text-[10px] text-slate-600 font-mono">
                         CID: {entry.cid.slice(0, 20)}...
-                        {entry.txHash && (
+                        {entry.data?.depositTxHash && (
                           <>
                             {" | "}
                             <a
-                              href={`https://stellar.expert/explorer/testnet/tx/${entry.txHash}`}
+                              href={`https://stellar.expert/explorer/testnet/tx/${entry.data.depositTxHash}`}
                               target="_blank"
                               rel="noopener noreferrer"
                               className="text-emerald-400 hover:underline"
@@ -687,8 +607,8 @@ export default function DashboardPage() {
                       >
                         {entry.ipfsResolved ? "IPFS" : "CID"}
                       </span>
-                      <span className={`flow-status-badge ${entry.status || "locked"}`}>
-                        {entry.status || "indexed"}
+                      <span className={`flow-status-badge ${entry.data?.status || "locked"}`}>
+                        {entry.data?.status || "indexed"}
                       </span>
                     </div>
                   </div>
@@ -718,10 +638,10 @@ export default function DashboardPage() {
                 >
                   <div className="min-w-0">
                     <span className="font-mono text-sm text-slate-200">
-                      {(proof.proofHash || proof.key).slice(0, 16)}...
+                      {(proof.data?.proofHash || proof.key).slice(0, 16)}...
                     </span>
                     <p className="mt-1 text-xs text-slate-500">
-                      {proof.metric || "—"} | {proof.timestamp?.split("T")[0] || "—"}
+                      {proof.data?.metric || "—"} | {proof.data?.timestamp?.split("T")[0] || "—"}
                     </p>
                     <p className="text-[10px] text-slate-600 font-mono">
                       CID: {proof.cid.slice(0, 16)}...
@@ -737,8 +657,8 @@ export default function DashboardPage() {
                     >
                       {proof.ipfsResolved ? "IPFS" : "CID"}
                     </span>
-                    <span className={`flow-status-badge ${proof.status || "pending"}`}>
-                      {proof.status || "indexed"}
+                    <span className={`flow-status-badge ${proof.data?.status || "pending"}`}>
+                      {proof.data?.status || "indexed"}
                     </span>
                   </div>
                 </div>

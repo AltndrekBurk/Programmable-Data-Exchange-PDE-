@@ -7,6 +7,7 @@ import { useEffect, useState } from "react";
 import { apiFetch } from "@/lib/api";
 import { uploadJsonToIpfs } from "@/lib/ipfs";
 import { buildIndexKey, buildManageDataTx, signAndSubmitTx } from "@/lib/stellar";
+import { readMarketplaceMcps, readMcpById } from "@/lib/chain-reader";
 import Button from "@/components/ui/Button";
 import { useFreighter } from "@/hooks/useFreighter";
 
@@ -168,20 +169,58 @@ function BuyDataInner() {
     if (status === "unauthenticated") router.push("/login");
   }, [status, router]);
 
-  /* Load MCP list for marketplace mode */
+  /* Chain-first: load MCP list from Stellar + IPFS */
   useEffect(() => {
-    apiFetch<{ standards: McpStandard[] }>("/api/marketplace")
-      .then((data) => setMcpList(data.standards || []))
+    readMarketplaceMcps()
+      .then((entries) => {
+        const mapped: McpStandard[] = entries
+          .filter((e) => e.data)
+          .map((e) => ({
+            id: e.data!.id || e.key.slice(3),
+            title: e.data!.title || "Untitled",
+            description: e.data!.description || "",
+            dataSource: e.data!.dataSource || "custom",
+            metrics: e.data!.metrics || [],
+            creator: e.data!.creator || "",
+            apiEndpoint: "",
+            authType: "",
+            responseFormat: "",
+            proofType: e.data!.proofType as McpStandard["proofType"],
+            freshnessSlaHours: e.data!.freshnessSlaHours,
+            minWitnessCount: e.data!.minWitnessCount,
+            deliveryFormat: e.data!.deliveryFormat as McpStandard["deliveryFormat"],
+            schemaVersion: e.data!.schemaVersion,
+          }));
+        setMcpList(mapped);
+      })
       .catch(() => setMcpList([]));
   }, []);
 
-  /* Load specific MCP from URL param */
+  /* Chain-first: load specific MCP from Stellar + IPFS */
   useEffect(() => {
     if (!mcpIdParam) return;
-    apiFetch<McpStandard>(`/api/marketplace/${mcpIdParam}`)
-      .then((data) => {
-        setMcp(data);
-        applyMcpToForm(data);
+    readMcpById(mcpIdParam)
+      .then((entry) => {
+        if (entry?.data) {
+          const data: McpStandard = {
+            id: entry.data.id || mcpIdParam,
+            title: entry.data.title || "Untitled",
+            description: entry.data.description || "",
+            dataSource: entry.data.dataSource || "custom",
+            metrics: entry.data.metrics || [],
+            creator: entry.data.creator || "",
+            apiEndpoint: "",
+            authType: "",
+            responseFormat: "",
+            proofType: entry.data.proofType as McpStandard["proofType"],
+            freshnessSlaHours: entry.data.freshnessSlaHours,
+            minWitnessCount: entry.data.minWitnessCount,
+            deliveryFormat: entry.data.deliveryFormat as McpStandard["deliveryFormat"],
+            schemaVersion: entry.data.schemaVersion,
+          };
+          setMcp(data);
+          applyMcpToForm(data);
+        }
       })
       .catch(() => {})
       .finally(() => setMcpLoading(false));

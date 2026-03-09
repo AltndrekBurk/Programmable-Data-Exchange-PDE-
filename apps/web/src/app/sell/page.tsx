@@ -5,6 +5,8 @@ import { useEffect, useState } from "react";
 import { apiFetch } from "@/lib/api";
 import { uploadJsonToIpfs } from "@/lib/ipfs";
 import { buildIndexKey, buildManageDataTx, signAndSubmitTx } from "@/lib/stellar";
+import { readActiveSkills, getPlatformAddress, type SkillData } from "@/lib/chain-reader";
+import { fetchFromIpfs } from "@/lib/ipfs";
 import Button from "@/components/ui/Button";
 import { useFreighter } from "@/hooks/useFreighter";
 
@@ -139,42 +141,73 @@ export default function SellDataPage() {
   useEffect(() => {
     if (status !== "authenticated" || !stellarAddress) return;
 
-    const apiUrl = process.env.NEXT_PUBLIC_API_URL || "http://localhost:3001";
+    const pseudoId = (session?.user as { pseudoId?: string })?.pseudoId;
 
-    fetch(`${apiUrl}/api/provider/me?address=${stellarAddress}`)
-      .then((res) => res.json())
-      .then((data) => {
-        setProvider(data);
-        if (data?.policy) {
-          setPolicy((prev) => ({
-            ...prev,
-            ...data.policy,
-            dataSources: Array.isArray(data.policy.dataSources)
-              ? data.policy.dataSources
-              : Array.isArray(data.dataSources)
-                ? data.dataSources
-                : [],
-          }));
-        } else if (Array.isArray(data?.dataSources) && data.dataSources.length > 0) {
-          setPolicy((prev) => ({ ...prev, dataSources: data.dataSources }));
+    // Chain-first: read provider data from Stellar + IPFS
+    const loadProvider = async () => {
+      try {
+        const platformAddr = getPlatformAddress();
+        if (!platformAddr || !pseudoId) return;
+        const { readAccountData, PREFIXES } = await import("@/lib/stellar");
+        const accountData = await readAccountData(platformAddr);
+        const providerKey = `${PREFIXES.provider}${pseudoId.slice(0, 24)}`;
+        const cid = accountData.get(providerKey);
+        if (cid) {
+          const data = await fetchFromIpfs<Record<string, unknown>>(cid);
+          setProvider({ registered: true, ...data });
+          if (data?.policy && typeof data.policy === "object") {
+            const p = data.policy as Record<string, unknown>;
+            setPolicy((prev) => ({
+              ...prev,
+              ...p,
+              dataSources: Array.isArray(p.dataSources)
+                ? p.dataSources
+                : Array.isArray(data.dataSources)
+                  ? (data.dataSources as string[])
+                  : [],
+            }));
+          } else if (Array.isArray(data?.dataSources) && (data.dataSources as string[]).length > 0) {
+            setPolicy((prev) => ({ ...prev, dataSources: data.dataSources as string[] }));
+          }
+        } else {
+          setProvider({ registered: false });
         }
-      })
-      .catch(() => setProvider({ registered: false }));
+      } catch {
+        setProvider({ registered: false });
+      }
+    };
 
-    apiFetch<{ skills: Task[] }>("/api/skills")
-      .then((data) => {
-        const mapped = (data.skills || []).map((s) => ({
-          ...s,
-          skillId: s.id,
-          metrics: s.metrics || [],
-          durationDays: s.durationDays || 30,
-          status: "pending" as const,
-        }));
+    // Chain-first: read skills from Stellar + IPFS
+    const loadSkills = async () => {
+      try {
+        const chainSkills = await readActiveSkills();
+        const mapped = chainSkills
+          .filter((s) => s.data)
+          .map((s) => {
+            const d = s.data as SkillData;
+            return {
+              id: d.id || crypto.randomUUID(),
+              skillId: d.id || crypto.randomUUID(),
+              title: d.title || "On-chain skill",
+              dataSource: d.dataSource || "unknown",
+              metrics: d.metrics || [],
+              rewardPerUser: Number(d.rewardPerUser || 0),
+              durationDays: Number(d.durationDays || 30),
+              status: "pending" as const,
+              expiresAt: d.createdAt
+                ? new Date(new Date(d.createdAt).getTime() + (d.durationDays || 30) * 86400000).toISOString()
+                : new Date(Date.now() + 7 * 86400000).toISOString(),
+            };
+          });
         setTasks(mapped);
-      })
-      .catch(() => setTasks([]))
+      } catch {
+        setTasks([]);
+      }
+    };
+
+    Promise.all([loadProvider(), loadSkills()])
       .finally(() => setLoading(false));
-  }, [status, stellarAddress]);
+  }, [status, stellarAddress, session]);
 
   /* ── Data source management ── */
   const addSource = () => {

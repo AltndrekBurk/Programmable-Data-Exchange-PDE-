@@ -3,20 +3,12 @@
 import { useState, useEffect } from "react";
 import { useSession } from "next-auth/react";
 import { useRouter } from "next/navigation";
-
-interface Proof {
-  proofHash: string;
-  skillId: string;
-  provider: string;
-  metric: string;
-  status: "verified" | "failed" | "pending";
-  timestamp: string;
-}
+import { readUserProofs, type ChainEntry, type ProofData } from "@/lib/chain-reader";
 
 export default function ProofsPage() {
   const { data: session, status } = useSession();
   const router = useRouter();
-  const [proofs, setProofs] = useState<Proof[]>([]);
+  const [proofs, setProofs] = useState<ChainEntry<ProofData>[]>([]);
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
@@ -26,17 +18,19 @@ export default function ProofsPage() {
     }
     if (status !== "authenticated") return;
 
-    const apiUrl = process.env.NEXT_PUBLIC_API_URL || "http://localhost:3001";
-    fetch(`${apiUrl}/api/proofs/list`)
-      .then((res) => res.json())
-      .then((data) => setProofs(data.proofs || []))
+    const pseudoId = (session?.user as { pseudoId?: string })?.pseudoId;
+    if (!pseudoId) return;
+
+    // Read directly from Stellar Horizon + IPFS — no backend call
+    readUserProofs(pseudoId)
+      .then((data) => setProofs(data))
       .catch(() => setProofs([]))
       .finally(() => setLoading(false));
-  }, [status, router]);
+  }, [status, router, session]);
 
-  const verified = proofs.filter((p) => p.status === "verified").length;
-  const failed = proofs.filter((p) => p.status === "failed").length;
-  const pending = proofs.filter((p) => p.status === "pending").length;
+  const verified = proofs.filter((p) => p.data?.status === "verified").length;
+  const failed = proofs.filter((p) => p.data?.status === "failed").length;
+  const pending = proofs.filter((p) => p.data?.status === "pending").length;
 
   if (loading) {
     return (
@@ -64,7 +58,7 @@ export default function ProofsPage() {
         <span className="flow-badge">Proof Ledger</span>
         <h1 className="mt-3 text-3xl font-bold text-slate-100">ZK Proof History</h1>
         <p className="mt-2 text-sm text-slate-400">
-          ZK-TLS proofs generated via Reclaim Protocol. Each proof cryptographically verifies data origin.
+          ZK-TLS proofs generated via Reclaim Protocol. Data read directly from Stellar + IPFS.
         </p>
       </div>
 
@@ -85,33 +79,46 @@ export default function ProofsPage() {
 
       {proofs.length === 0 ? (
         <div className="flow-surface rounded-xl py-16 text-center">
-          <p className="text-slate-400">No proofs recorded yet.</p>
+          <p className="text-slate-400">No proof records on-chain yet.</p>
           <p className="text-sm text-slate-500 mt-2">
-            Proofs appear here after a provider submits verified data for a flow task.
+            Proofs appear after a provider generates a ZK-TLS proof for a skill.
           </p>
         </div>
       ) : (
         <div className="flow-surface rounded-xl divide-y divide-slate-800">
           {proofs.map((proof) => (
             <div
-              key={proof.proofHash}
+              key={proof.key}
               className="flex items-center justify-between px-5 py-4"
             >
               <div className="min-w-0">
                 <div className="flex items-center gap-3">
                   <span className="font-mono text-sm text-slate-200">
-                    {proof.proofHash.slice(0, 16)}...
+                    {(proof.data?.proofHash || proof.key).slice(0, 16)}...
                   </span>
-                  <span className={`flow-status-badge ${proof.status}`}>
-                    {proof.status === "verified" ? "Verified" : proof.status === "failed" ? "Failed" : "Pending"}
+                  <span
+                    className={`rounded-full px-1.5 py-0.5 text-[10px] border ${
+                      proof.ipfsResolved
+                        ? "border-emerald-500/30 text-emerald-300"
+                        : "border-slate-600 text-slate-400"
+                    }`}
+                  >
+                    {proof.ipfsResolved ? "IPFS" : "CID"}
+                  </span>
+                  <span className={`flow-status-badge ${proof.data?.status || "pending"}`}>
+                    {proof.data?.status === "verified"
+                      ? "Verified"
+                      : proof.data?.status === "failed"
+                        ? "Failed"
+                        : "Pending"}
                   </span>
                 </div>
                 <p className="text-xs text-slate-500 mt-1">
-                  {proof.provider} / {proof.metric} — {new Date(proof.timestamp).toLocaleString("en-US")}
+                  {proof.data?.metric || "—"} — {proof.data?.timestamp?.split("T")[0] || "—"}
                 </p>
               </div>
               <div className="text-xs text-slate-500 font-mono shrink-0 ml-4">
-                Skill: {proof.skillId.slice(0, 8)}
+                {proof.data?.skillId ? `Skill: ${proof.data.skillId.slice(0, 8)}` : proof.cid.slice(0, 12)}
               </div>
             </div>
           ))}
