@@ -1,7 +1,6 @@
 import { Hono } from 'hono'
 import { z } from 'zod'
 import { zValidator } from '@hono/zod-validator'
-import { generatePseudonym } from '@pde/pseudonym'
 import { horizonServer } from '@pde/stellar'
 
 export const consentRouter = new Hono()
@@ -20,11 +19,6 @@ const notifyUserSchema = z.object({
 consentRouter.post('/notify', zValidator('json', notifyUserSchema), async (c) => {
   const body = c.req.valid('json')
 
-  const secret = process.env.PSEUDONYM_SECRET
-  if (!secret) return c.json({ error: 'Server configuration error: PSEUDONYM_SECRET missing' }, 500)
-
-  const pseudoId = generatePseudonym(secret, body.stellarAddress).pseudonym
-
   const message = `📊 New data task available!\n\nSkill: ${body.skillId.slice(0, 8)}...\n\nReply "yes" to accept, "no" to decline.`
 
   try {
@@ -38,7 +32,7 @@ consentRouter.post('/notify', zValidator('json', notifyUserSchema), async (c) =>
         message,
         name: 'PDE-Notify',
         agentId: 'main',
-        sessionKey: `skill:${body.skillId}:${pseudoId}`,
+        sessionKey: `skill:${body.skillId}:${body.stellarAddress}`,
         wakeMode: 'now',
         deliver: true,
         channel: body.channel,
@@ -50,7 +44,7 @@ consentRouter.post('/notify', zValidator('json', notifyUserSchema), async (c) =>
       return c.json({ error: 'OpenClaw notification failed', status: res.status }, 502)
     }
 
-    return c.json({ status: 'notified', skillId: body.skillId, pseudoId })
+    return c.json({ status: 'notified', skillId: body.skillId, stellarAddress: body.stellarAddress })
   } catch (err) {
     return c.json({ error: 'OpenClaw unreachable' }, 503)
   }
@@ -59,7 +53,7 @@ consentRouter.post('/notify', zValidator('json', notifyUserSchema), async (c) =>
 // POST /api/consent/record — Write user decision to Stellar
 const recordConsentSchema = z.object({
   skillId: z.string().uuid(),
-  pseudoId: z.string(),
+  stellarAddress: z.string().startsWith('G').length(56),
   decision: z.enum(['ACCEPT', 'REJECT']),
   txHash: z.string().min(1).optional(),
   publicKey: z.string().startsWith('G').length(56).optional(),
@@ -89,11 +83,11 @@ consentRouter.post('/record', zValidator('json', recordConsentSchema), async (c)
 
       const [_, memoSkill, memoUser, memoDecision] = parts
       const compactSkillId = body.skillId.replace(/-/g, '').slice(0, 4)
-      const compactPseudoId = body.pseudoId.replace(/-/g, '').slice(0, 4)
+      const compactAddress = body.stellarAddress.slice(0, 4)
 
       if (
         memoSkill !== compactSkillId ||
-        memoUser !== compactPseudoId ||
+        memoUser !== compactAddress ||
         memoDecision !== body.decision
       ) {
         return c.json({ error: 'Consent memo beklenen degerlerle eslesmiyor' }, 409)

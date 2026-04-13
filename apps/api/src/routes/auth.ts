@@ -2,7 +2,6 @@ import { Hono } from 'hono'
 import { z } from 'zod'
 import { zValidator } from '@hono/zod-validator'
 import { Keypair } from '@stellar/stellar-sdk'
-import { generatePseudonym } from '@pde/pseudonym'
 import crypto from 'crypto'
 
 export const authRouter = new Hono()
@@ -68,7 +67,7 @@ authRouter.get('/challenge', (c) => {
 // ---------------------------------------------------------------------------
 // POST /api/auth/verify
 // Verifies Ed25519 signature against the challenge.
-// Returns pseudonymous ID (real identity is never stored).
+// Returns stellarAddress on success.
 // ---------------------------------------------------------------------------
 const verifySchema = z.object({
   publicKey: z.string().startsWith('G').length(56),
@@ -113,12 +112,5 @@ authRouter.post('/verify', zValidator('json', verifySchema), async (c) => {
     return c.json({ error: 'Signature verification failed' }, 401)
   }
 
-  // Generate pseudonymous ID
-  const secret = process.env.PSEUDONYM_SECRET
-  if (!secret) {
-    return c.json({ error: 'Server configuration error (PSEUDONYM_SECRET)' }, 500)
-  }
-  const pseudoId = generatePseudonym(secret, publicKey).pseudonym
-
-  return c.json({ pseudoId, stellarAddress: publicKey })
+  return c.json({ stellarAddress: publicKey })
 })

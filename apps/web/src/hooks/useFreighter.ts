@@ -133,7 +133,7 @@ export function useFreighter() {
   const signAndSubmitConsentTx = useCallback(
     async (
       fullSkillId: string,
-      pseudoId: string,
+      stellarAddress: string,
       publicKey: string,
       decision: "ACCEPT" | "REJECT"
     ): Promise<string | null> => {
@@ -155,8 +155,8 @@ export function useFreighter() {
         const account = await server.loadAccount(publicKey);
 
         const skillId4 = compactId(fullSkillId);
-        const pseudo4 = compactId(pseudoId || publicKey);
-        const memoText = `CONSENT:${skillId4}:${pseudo4}:${decision}`;
+        const addr4 = compactId(stellarAddress || publicKey);
+        const memoText = `CONSENT:${skillId4}:${addr4}:${decision}`;
 
         const tx = new StellarSdk.TransactionBuilder(account, {
           fee: StellarSdk.BASE_FEE,

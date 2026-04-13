@@ -5,7 +5,6 @@ import { Hono } from "hono";
 import { zValidator } from "@hono/zod-validator";
 import { z } from "zod";
 import { v4 as uuidv4 } from "uuid";
-import { generatePseudonym } from "@pde/pseudonym";
 import type { StorageService, StoredMcpStandard } from "@pde/storage";
 
 function parseOnChainUsdcVolume(raw: string): number | null {
@@ -100,12 +99,7 @@ export function createMarketplaceRouter(storage: StorageService) {
   router.post("/", zValidator("json", createMcpSchema), async (c) => {
     const body = c.req.valid("json");
     const id = uuidv4();
-    const secret = process.env.PSEUDONYM_SECRET;
-    if (!secret) return c.json({ error: "PSEUDONYM_SECRET not configured" }, 500);
-
-    const creatorPseudo = body.creatorAddress
-      ? generatePseudonym(secret, body.creatorAddress).pseudonym
-      : generatePseudonym(secret, "marketplace-creator").pseudonym;
+    const creatorAddress = body.creatorAddress || "unknown";
 
     // Upload skill document to IPFS if provided
     let skillDocCid: string | undefined;
@@ -162,7 +156,7 @@ export function createMarketplaceRouter(storage: StorageService) {
       apiEndpoint: body.apiEndpoint,
       authType: body.authType,
       responseFormat: body.responseFormat ?? "",
-      creator: creatorPseudo,
+      creator: creatorAddress,
       creatorAddress: body.creatorAddress,
       usageFee: body.usageFee ?? 0.05,
       usageCount: 0,

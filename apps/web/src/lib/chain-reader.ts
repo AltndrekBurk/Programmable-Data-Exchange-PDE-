@@ -67,7 +67,7 @@ export interface EscrowData {
 export interface ProofData {
   proofHash?: string;
   skillId?: string;
-  providerPseudoId?: string;
+  providerAddress?: string;
   metric?: string;
   status?: "verified" | "failed" | "pending";
   timestamp?: string;
@@ -204,7 +204,6 @@ export interface DashboardChainState {
  * No backend call needed — true dApp pattern.
  */
 export async function readDashboardState(
-  pseudoId: string,
   stellarAddress: string
 ): Promise<DashboardChainState> {
   const platformAddress = getPlatformAddress();
@@ -228,12 +227,11 @@ export async function readDashboardState(
   );
   const userEscrows = resolvedEscrows.filter(
     (e) =>
-      e.data?.depositor === pseudoId ||
       e.data?.depositorAddress === stellarAddress
   );
 
   // Step 4: Resolve provider record for this user
-  const userProviderKey = `${PREFIXES.provider}${pseudoId.slice(0, 24)}`;
+  const userProviderKey = `${PREFIXES.provider}${stellarAddress.slice(0, 24)}`;
   const providerEntry = categorized.providers.find(
     (p) => p.key === userProviderKey
   );
@@ -264,7 +262,7 @@ export async function readDashboardState(
     10
   );
   const userProofs = resolvedProofs.filter(
-    (p) => p.data?.providerPseudoId === pseudoId
+    (p) => p.data?.providerAddress === stellarAddress
   );
 
   return {
@@ -299,10 +297,9 @@ export async function readDashboardState(
 
 /**
  * Read escrow entries directly from chain + IPFS.
- * Filters by user address or pseudoId.
+ * Filters by user stellarAddress.
  */
 export async function readUserEscrows(
-  pseudoId: string,
   stellarAddress: string
 ): Promise<ChainEntry<EscrowData>[]> {
   const platformAddress = getPlatformAddress();
@@ -316,7 +313,6 @@ export async function readUserEscrows(
 
   return resolved.filter(
     (e) =>
-      e.data?.depositor === pseudoId ||
       e.data?.depositorAddress === stellarAddress
   );
 }
@@ -325,10 +321,10 @@ export async function readUserEscrows(
 
 /**
  * Read proof entries directly from chain + IPFS.
- * Filters by user pseudoId.
+ * Filters by user stellarAddress.
  */
 export async function readUserProofs(
-  pseudoId: string
+  stellarAddress: string
 ): Promise<ChainEntry<ProofData>[]> {
   const platformAddress = getPlatformAddress();
   if (!platformAddress) return [];
@@ -336,7 +332,7 @@ export async function readUserProofs(
   const categorized = await readAndCategorize(platformAddress);
   const resolved = await resolveIpfsBatch<ProofData>(categorized.proofs, 20);
 
-  return resolved.filter((p) => p.data?.providerPseudoId === pseudoId);
+  return resolved.filter((p) => p.data?.providerAddress === stellarAddress);
 }
 
 // ── Skill / task list (frontend-direct) ────────────────────────────────────

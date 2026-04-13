@@ -107,11 +107,11 @@ export class StorageService {
   // =========================================================================
 
   async storeProvider(provider: StoredProvider): Promise<{ ipfsHash: string; stellarTx?: string }> {
-    return this.storeToIpfsAndStellar('provider', provider.pseudoId, provider)
+    return this.storeToIpfsAndStellar('provider', provider.stellarAddress, provider)
   }
 
-  async getProvider(pseudoId: string): Promise<StoredProvider | null> {
-    return this.fetchFromCache<StoredProvider>('provider', pseudoId)
+  async getProvider(stellarAddress: string): Promise<StoredProvider | null> {
+    return this.fetchFromCache<StoredProvider>('provider', stellarAddress)
   }
 
   async listProviders(dataSource?: string): Promise<StoredProvider[]> {
@@ -125,11 +125,11 @@ export class StorageService {
 
   async storeBotConfig(config: StoredBotConfig): Promise<void> {
     // Bot configs are sensitive; write directly to IPFS + Stellar
-    await this.storeToIpfsAndStellar('botconfig', config.pseudoId, config)
+    await this.storeToIpfsAndStellar('botconfig', config.stellarAddress, config)
   }
 
-  async getBotConfig(pseudoId: string): Promise<StoredBotConfig | null> {
-    return this.fetchFromCache<StoredBotConfig>('botconfig', pseudoId)
+  async getBotConfig(stellarAddress: string): Promise<StoredBotConfig | null> {
+    return this.fetchFromCache<StoredBotConfig>('botconfig', stellarAddress)
   }
 
   // =========================================================================
@@ -144,10 +144,10 @@ export class StorageService {
     return this.fetchFromCache<EscrowRecord>('escrow', id)
   }
 
-  async listEscrows(depositorPseudoId?: string): Promise<EscrowRecord[]> {
+  async listEscrows(depositorAddress?: string): Promise<EscrowRecord[]> {
     const all = await this.listFromCache<EscrowRecord>('escrow')
-    if (!depositorPseudoId) return all
-    return all.filter((r) => r.depositor === depositorPseudoId)
+    if (!depositorAddress) return all
+    return all.filter((r) => r.depositorAddress === depositorAddress)
   }
 
   async updateEscrow(id: string, update: Partial<EscrowRecord>): Promise<EscrowRecord | null> {

@@ -137,7 +137,7 @@ export default function LoginPage() {
       </div>
 
       <p className="text-center text-xs text-slate-500">
-        Your real identity is never stored &mdash; only an anonymous pseudonym ID is used
+        Your wallet address is your identity &mdash; no personal data is stored
       </p>
     </div>
   );

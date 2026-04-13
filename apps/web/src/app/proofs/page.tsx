@@ -18,11 +18,11 @@ export default function ProofsPage() {
     }
     if (status !== "authenticated") return;
 
-    const pseudoId = (session?.user as { pseudoId?: string })?.pseudoId;
-    if (!pseudoId) return;
+    const addr = (session?.user as { stellarAddress?: string })?.stellarAddress;
+    if (!addr) return;
 
     // Read directly from Stellar Horizon + IPFS — no backend call
-    readUserProofs(pseudoId)
+    readUserProofs(addr)
       .then((data) => setProofs(data))
       .catch(() => setProofs([]))
       .finally(() => setLoading(false));

@@ -1,7 +1,6 @@
 import { Hono } from 'hono'
 import { z } from 'zod'
 import { zValidator } from '@hono/zod-validator'
-import { generatePseudonym } from '@pde/pseudonym'
 import type { EscrowAdapter } from '@pde/storage'
 
 export function createEscrowRouter(escrow: EscrowAdapter) {
@@ -17,14 +16,10 @@ export function createEscrowRouter(escrow: EscrowAdapter) {
 
   router.post('/lock', zValidator('json', lockSchema), async (c) => {
     const body = c.req.valid('json')
-    const secret = process.env.PSEUDONYM_SECRET
-    if (!secret) return c.json({ error: 'PSEUDONYM_SECRET not configured' }, 500)
-    const pseudoId = generatePseudonym(secret, body.stellarAddress).pseudonym
-
     const record = await escrow.lock({
       skillId: body.skillId,
       title: body.title,
-      depositor: pseudoId,
+      depositor: body.stellarAddress,
       depositorAddress: body.stellarAddress,
       amount: body.amount,
     })
@@ -112,15 +107,7 @@ export function createEscrowRouter(escrow: EscrowAdapter) {
   // GET /api/escrow/list
   router.get('/list', async (c) => {
     const address = c.req.query('address')
-    let depositorPseudoId: string | undefined
-
-    if (address) {
-      const secret = process.env.PSEUDONYM_SECRET
-      if (!secret) return c.json({ error: 'PSEUDONYM_SECRET not configured' }, 500)
-      depositorPseudoId = generatePseudonym(secret, address).pseudonym
-    }
-
-    const records = await escrow.listEscrows(depositorPseudoId)
+    const records = await escrow.listEscrows(address)
 
     const escrows = records.map((r) => ({
       id: r.id,

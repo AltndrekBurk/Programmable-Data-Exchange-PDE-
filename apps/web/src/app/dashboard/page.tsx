@@ -52,10 +52,10 @@ export default function DashboardPage() {
   useEffect(() => {
     if (status !== "authenticated" || !stellarAddress) return;
 
-    const pseudoId = (session?.user as { pseudoId?: string })?.pseudoId;
-    if (!pseudoId) return;
+    const addr = (session?.user as { stellarAddress?: string })?.stellarAddress;
+    if (!addr) return;
 
-    readDashboardState(pseudoId, stellarAddress)
+    readDashboardState(stellarAddress)
       .then((data) => {
         setChainState(data);
         if (data.providerStatus?.openclawUrl) {
@@ -110,7 +110,7 @@ export default function DashboardPage() {
 
   /* ── Consent decision ── */
   const handleConsent = async (skillId: string, decision: "ACCEPT" | "REJECT") => {
-    if (!session?.user?.pseudoId || !stellarAddress) return;
+    if (!session?.user?.stellarAddress || !stellarAddress) return;
     setConsentLoading(skillId);
 
     try {
@@ -119,7 +119,7 @@ export default function DashboardPage() {
       if (decision === "ACCEPT") {
         const hash = await freighter.signAndSubmitConsentTx(
           skillId,
-          session.user.pseudoId,
+          session.user.stellarAddress,
           stellarAddress,
           "ACCEPT"
         );
@@ -134,7 +134,7 @@ export default function DashboardPage() {
         method: "POST",
         body: JSON.stringify({
           skillId,
-          pseudoId: session.user.pseudoId,
+          stellarAddress: session.user.stellarAddress,
           decision,
           ...(txHash ? { txHash, publicKey: stellarAddress } : {}),
         }),
@@ -234,7 +234,7 @@ export default function DashboardPage() {
           <p className="mt-2 text-sm text-slate-400">
             Welcome,{" "}
             <span className="font-mono text-slate-200">
-              {session?.user?.pseudoId?.slice(0, 8)}
+              {session?.user?.stellarAddress?.slice(0, 8)}
             </span>
           </p>
         </div>

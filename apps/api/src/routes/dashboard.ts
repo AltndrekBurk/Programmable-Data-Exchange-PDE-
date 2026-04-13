@@ -1,6 +1,5 @@
 import { Hono } from 'hono'
 import { readAccountData } from '@pde/stellar'
-import { generatePseudonym } from '@pde/pseudonym'
 import type { StorageService } from '@pde/storage'
 
 /**
@@ -22,10 +21,6 @@ export function createDashboardRouter(storage: StorageService) {
     if (!platformAddress) {
       return c.json({ error: 'STELLAR_PLATFORM_PUBLIC not configured', onChain: false }, 500)
     }
-
-    const secret = process.env.PSEUDONYM_SECRET
-    if (!secret) return c.json({ error: 'PSEUDONYM_SECRET not configured' }, 500)
-    const pseudoId = generatePseudonym(secret, address).pseudonym
 
     const gateway = process.env.PINATA_GATEWAY_URL || 'https://gateway.pinata.cloud'
 
@@ -74,12 +69,12 @@ export function createDashboardRouter(storage: StorageService) {
 
       // Step 5: Filter user-relevant items
       const userEscrows = resolvedEscrows.filter(
-        (e) => e.data?.depositor === pseudoId || e.data?.depositorAddress === address
+        (e) => e.data?.depositorAddress === address
       )
 
       // Step 6: Resolve provider record for this user
       let providerData: any = null
-      const userProviderKey = `pr:${pseudoId.slice(0, 24)}`
+      const userProviderKey = `pr:${address.slice(0, 24)}`
       const providerEntry = providers.find((p) => p.key === userProviderKey)
       if (providerEntry) {
         try {
@@ -113,13 +108,13 @@ export function createDashboardRouter(storage: StorageService) {
       )
 
       const userProofs = resolvedProofs.filter(
-        (p) => p.data?.providerPseudoId === pseudoId
+        (p) => p.data?.providerAddress === address
       )
 
       return c.json({
         onChain: true,
         platformAddress,
-        userPseudoId: pseudoId,
+        userAddress: address,
         stellarIndexCount: accountData.size,
         summary: {
           totalSkills: skills.length,

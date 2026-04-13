@@ -88,10 +88,9 @@ export default function TasksPage() {
     skillId: string,
     decision: "ACCEPT" | "REJECT"
   ) => {
-    const user = session?.user as { pseudoId?: string; stellarAddress?: string } | undefined;
-    const pseudoId = user?.pseudoId || user?.stellarAddress;
-    const publicKey = user?.stellarAddress || user?.pseudoId;
-    if (!pseudoId || !publicKey) {
+    const user = session?.user as { stellarAddress?: string } | undefined;
+    const stellarAddr = user?.stellarAddress;
+    if (!stellarAddr) {
       toast("Wallet session not found", "error");
       return;
     }
@@ -101,11 +100,11 @@ export default function TasksPage() {
       let txHash: string | null = null;
       if (decision === "ACCEPT") {
         const pk = await freighter.connect();
-        if (!pk || pk !== publicKey) {
+        if (!pk || pk !== stellarAddr) {
           toast("Freighter wallet address does not match session address", "error");
           throw new Error("Address mismatch");
         }
-        txHash = await freighter.signAndSubmitConsentTx(skillId, pseudoId, publicKey, decision);
+        txHash = await freighter.signAndSubmitConsentTx(skillId, stellarAddr, stellarAddr, decision);
         if (!txHash) {
           throw new Error("Consent transaction failed");
         }
@@ -115,8 +114,8 @@ export default function TasksPage() {
         method: "POST",
         body: JSON.stringify({
           skillId,
-          pseudoId,
-          publicKey,
+          stellarAddress: stellarAddr,
+          publicKey: stellarAddr,
           decision,
           txHash,
         }),

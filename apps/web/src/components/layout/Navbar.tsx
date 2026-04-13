@@ -56,7 +56,7 @@ export default function Navbar() {
                     {session.user.stellarAddress?.slice(-4)}
                   </span>
                   <span className="text-slate-500">
-                    {session.user.pseudoId?.slice(0, 8)}
+                    {session.user.stellarAddress?.slice(0, 8)}
                   </span>
                 </div>
                 <button

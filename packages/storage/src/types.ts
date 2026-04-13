@@ -44,7 +44,7 @@ export interface StoredMcpStandard {
   apiEndpoint: string
   authType: string
   responseFormat: string
-  /** pseudoId of the creator */
+  /** Stellar address of the creator */
   creator: string
   /** Stellar G... address of the creator — receives usage fees */
   creatorAddress?: string
@@ -118,14 +118,13 @@ export interface StoredProof {
   skillId: string
   provider: string
   metric: string
-  providerPseudoId?: string
+  providerAddress?: string
   status: 'verified' | 'failed' | 'pending'
   timestamp: string
   ipfsHash?: string
 }
 
 export interface StoredProvider {
-  pseudoId: string
   stellarAddress: string
   dataSources: string[]
   /** Free-text description of supported data types/sources and policies */
@@ -140,7 +139,7 @@ export interface StoredProvider {
 }
 
 export interface StoredBotConfig {
-  pseudoId: string
+  stellarAddress: string
   openclawUrl: string
   openclawToken: string
 }

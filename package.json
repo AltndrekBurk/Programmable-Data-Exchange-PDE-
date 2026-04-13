@@ -9,7 +9,7 @@
     "dev": "concurrently -k -n api,web \"npm run dev --workspace=apps/api\" \"npm run dev --workspace=apps/web\"",
     "dev:api": "npm run dev --workspace=apps/api",
     "dev:web": "npm run dev --workspace=apps/web",
-    "build:packages": "npm run build --workspace=packages/pseudonym && npm run build --workspace=packages/ipfs && npm run build --workspace=packages/stellar && npm run build --workspace=packages/reclaim && npm run build --workspace=packages/storage",
+    "build:packages": "npm run build --workspace=packages/ipfs && npm run build --workspace=packages/stellar && npm run build --workspace=packages/reclaim && npm run build --workspace=packages/storage",
     "build:api": "npm run build --workspace=apps/api",
     "build:web": "npm run build --workspace=apps/web",
     "build": "npm run build:packages && npm run build:api && npm run build:web",

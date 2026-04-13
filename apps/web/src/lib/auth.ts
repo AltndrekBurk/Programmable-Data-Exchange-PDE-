@@ -18,12 +18,10 @@ export const authOptions: NextAuthOptions = {
       async authorize(credentials) {
         const publicKey =
           (credentials as { publicKey?: string } | null)?.publicKey || "unknown";
-        const pseudoId = publicKey;
         return {
-          id: pseudoId,
-          name: pseudoId,
+          id: publicKey,
+          name: publicKey,
           stellarAddress: publicKey,
-          pseudoId,
         };
       },
     }),
@@ -34,16 +32,13 @@ export const authOptions: NextAuthOptions = {
         token.stellarAddress = (
           user as { stellarAddress: string }
         ).stellarAddress;
-        token.pseudoId = user.id;
       }
       return token;
     },
     async session({ session, token }) {
       if (session.user) {
-        (session.user as { stellarAddress: string; pseudoId: string }).stellarAddress =
+        (session.user as { stellarAddress: string }).stellarAddress =
           (token.stellarAddress as string | undefined) ?? "";
-        (session.user as { stellarAddress: string; pseudoId: string }).pseudoId =
-          (token.pseudoId as string | undefined) ?? "";
       }
       return session;
     },

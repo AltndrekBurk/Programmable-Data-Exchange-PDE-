@@ -14,7 +14,7 @@ export function createProofsRouter(storage: StorageService, escrow: EscrowAdapte
 
   const submitProofSchema = z.object({
     skillId: z.string().uuid(),
-    userId: z.string(),          // provider's pseudoId
+    userId: z.string(),          // provider's stellarAddress
     providerAddress: z.string().startsWith('G').length(56).optional(),
     proof: z.object({
       identifier: z.string(),
@@ -106,7 +106,7 @@ export function createProofsRouter(storage: StorageService, escrow: EscrowAdapte
 
     const replayWindowMs = skillPolicy.replayProtectionWindowHours * 60 * 60 * 1000
     const providerReplay = existingProofs.find((p) => {
-      if (p.providerPseudoId !== body.userId) return false
+      if (p.providerAddress !== body.userId) return false
       const prevTs = Date.parse(p.timestamp)
       return Number.isFinite(prevTs) && (Date.now() - prevTs) <= replayWindowMs
     })
@@ -178,7 +178,7 @@ export function createProofsRouter(storage: StorageService, escrow: EscrowAdapte
       const deliveryBody = {
         skillId: body.skillId,
         proofHash,
-        providerPseudoId: body.userId,
+        providerAddress: body.userId,
         provider: body.proof.claimData.provider,
         metric: body.proof.claimData.parameters,
         timestamp: new Date().toISOString(),
@@ -239,7 +239,7 @@ export function createProofsRouter(storage: StorageService, escrow: EscrowAdapte
       skillId: body.skillId,
       provider: body.proof.claimData.provider,
       metric: body.proof.claimData.parameters,
-      providerPseudoId: body.userId,
+      providerAddress: body.userId,
       status: 'verified',
       timestamp: new Date().toISOString(),
     })

@@ -1,7 +1,6 @@
 import { Hono } from 'hono'
 import { z } from 'zod'
 import { zValidator } from '@hono/zod-validator'
-import { generatePseudonym } from '@pde/pseudonym'
 import type { StorageService } from '@pde/storage'
 import { uploadJson } from '@pde/ipfs'
 
@@ -41,17 +40,13 @@ export function createProviderRouter(storage: StorageService) {
   // Kept for backward compatibility
   router.post('/register', zValidator('json', registerSchema), async (c) => {
     const body = c.req.valid('json')
-    const secret = process.env.PSEUDONYM_SECRET
-    if (!secret) return c.json({ error: 'PSEUDONYM_SECRET not configured' }, 500)
-    const pseudoId = generatePseudonym(secret, body.stellarAddress).pseudonym
-
     // Upload policy to IPFS if provided
     let policyCid: string | undefined
     if (body.policy) {
       try {
         policyCid = await uploadJson(
-          { ...body.policy, pseudoId, stellarAddress: body.stellarAddress, createdAt: new Date().toISOString() },
-          { name: `policy-${pseudoId.slice(0, 8)}.json`, keyvalues: { type: 'policy', provider: pseudoId.slice(0, 32) } }
+          { ...body.policy, stellarAddress: body.stellarAddress, createdAt: new Date().toISOString() },
+          { name: `policy-${body.stellarAddress.slice(0, 8)}.json`, keyvalues: { type: 'policy', provider: body.stellarAddress.slice(0, 32) } }
         )
       } catch (err) {
         console.error('[provider] policy IPFS upload failed:', err)
@@ -61,7 +56,6 @@ export function createProviderRouter(storage: StorageService) {
     const dataSources = body.policy?.dataSources ?? body.dataSources ?? []
 
     await storage.storeProvider({
-      pseudoId,
       stellarAddress: body.stellarAddress,
       dataSources,
       supportedDataDescription: body.supportedDataDescription,
@@ -87,7 +81,7 @@ export function createProviderRouter(storage: StorageService) {
 
     return c.json({
       status: 'registered',
-      pseudoId,
+      stellarAddress: body.stellarAddress,
       policyCid,
       supportedDataDescription: body.supportedDataDescription,
       message: 'Veri saglayici olarak kaydoldunuz',
@@ -98,7 +92,7 @@ export function createProviderRouter(storage: StorageService) {
   router.get('/list', async (c) => {
     const providers = await storage.listProviders()
     const mapped = providers.map((p) => ({
-      pseudoId: p.pseudoId,
+      stellarAddress: p.stellarAddress,
       supportedDataDescription: p.supportedDataDescription,
       dataSources: p.dataSources,
       channel: p.channel,
@@ -113,10 +107,7 @@ export function createProviderRouter(storage: StorageService) {
     const address = c.req.query('address')
     if (!address) return c.json({ error: 'address query param required' }, 400)
 
-    const secret = process.env.PSEUDONYM_SECRET
-    if (!secret) return c.json({ error: 'PSEUDONYM_SECRET not configured' }, 500)
-    const pseudoId = generatePseudonym(secret, address).pseudonym
-    const provider = await storage.getProvider(pseudoId)
+    const provider = await storage.getProvider(address)
 
     if (!provider) return c.json({ registered: false })
     return c.json({ registered: true, ...provider })
@@ -131,23 +122,19 @@ export function createProviderRouter(storage: StorageService) {
 
   router.post('/bot-config', zValidator('json', botConfigSchema), async (c) => {
     const body = c.req.valid('json')
-    const secret = process.env.PSEUDONYM_SECRET
-    if (!secret) return c.json({ error: 'PSEUDONYM_SECRET not configured' }, 500)
-    const pseudoId = generatePseudonym(secret, body.stellarAddress).pseudonym
-
     await storage.storeBotConfig({
-      pseudoId,
+      stellarAddress: body.stellarAddress,
       openclawUrl: body.openclawUrl,
       openclawToken: body.openclawToken,
     })
 
     // Update provider if exists
-    const provider = await storage.getProvider(pseudoId)
+    const provider = await storage.getProvider(body.stellarAddress)
     if (provider) {
       await storage.storeProvider({ ...provider, openclawUrl: body.openclawUrl })
     }
 
-    return c.json({ status: 'saved', pseudoId })
+    return c.json({ status: 'saved', stellarAddress: body.stellarAddress })
   })
 
   // POST /api/provider/policy — upload to IPFS, return CID
@@ -159,19 +146,15 @@ export function createProviderRouter(storage: StorageService) {
 
   router.post('/policy', zValidator('json', providerPolicyUpdateSchema), async (c) => {
     const body = c.req.valid('json')
-    const secret = process.env.PSEUDONYM_SECRET
-    if (!secret) return c.json({ error: 'PSEUDONYM_SECRET not configured' }, 500)
-    const pseudoId = generatePseudonym(secret, body.stellarAddress).pseudonym
-
-    const provider = await storage.getProvider(pseudoId)
+    const provider = await storage.getProvider(body.stellarAddress)
     if (!provider) return c.json({ error: 'Provider bulunamadi' }, 404)
 
     // Upload policy to IPFS
     let policyCid: string | undefined
     try {
       policyCid = await uploadJson(
-        { ...body.policy, pseudoId, stellarAddress: body.stellarAddress, updatedAt: new Date().toISOString() },
-        { name: `policy-${pseudoId.slice(0, 8)}.json`, keyvalues: { type: 'policy', provider: pseudoId.slice(0, 32) } }
+        { ...body.policy, stellarAddress: body.stellarAddress, updatedAt: new Date().toISOString() },
+        { name: `policy-${body.stellarAddress.slice(0, 8)}.json`, keyvalues: { type: 'policy', provider: body.stellarAddress.slice(0, 32) } }
       )
     } catch (err) {
       console.error('[provider] policy IPFS upload failed:', err)
@@ -185,7 +168,7 @@ export function createProviderRouter(storage: StorageService) {
       policy: updatedPolicy,
     })
 
-    return c.json({ status: 'saved', pseudoId, policyCid, policy: updatedPolicy })
+    return c.json({ status: 'saved', stellarAddress: body.stellarAddress, policyCid, policy: updatedPolicy })
   })
 
   return router

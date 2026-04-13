@@ -72,7 +72,7 @@ export async function dispatchSkillToProviders(
   const apiBase = process.env.API_BASE_URL ?? 'http://localhost:3001'
 
   for (const provider of providers) {
-    const botConfig = await storage.getBotConfig(provider.pseudoId)
+    const botConfig = await storage.getBotConfig(provider.stellarAddress)
     if (!botConfig?.openclawUrl || !botConfig.openclawToken) {
       skipped++
       continue
@@ -101,7 +101,7 @@ export async function dispatchSkillToProviders(
       channel: provider.channel,
       to: provider.contactInfo,
       message,
-      sessionKey: `skill:${skillId}:${provider.pseudoId}`,
+      sessionKey: `skill:${skillId}:${provider.stellarAddress}`,
     })
 
     ok ? notified++ : skipped++
@@ -115,15 +115,15 @@ export async function dispatchSkillToProviders(
  */
 export async function notifyProofAccepted(
   storage: import('@pde/storage').StorageService,
-  pseudoId: string,
+  stellarAddress: string,
   skillId: string,
   proofHash: string,
   providerShare: number
 ): Promise<void> {
-  const botConfig = await storage.getBotConfig(pseudoId)
+  const botConfig = await storage.getBotConfig(stellarAddress)
   if (!botConfig?.openclawUrl) return
 
-  const provider = await storage.getProvider(pseudoId)
+  const provider = await storage.getProvider(stellarAddress)
   if (!provider) return
 
   const message =

@@ -22,7 +22,7 @@ import type { StorageService } from './storage-service.js'
 export interface LockParams {
   skillId: string
   title: string
-  depositor: string // pseudoId
+  depositor: string // stellarAddress
   depositorAddress: string // Stellar G... address
   amount: number // USDC
 }

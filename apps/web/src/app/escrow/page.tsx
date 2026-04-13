@@ -19,11 +19,11 @@ export default function EscrowPage() {
     if (status !== "authenticated") return;
 
     const address = (session?.user as { stellarAddress?: string })?.stellarAddress;
-    const pseudoId = (session?.user as { pseudoId?: string })?.pseudoId;
-    if (!address || !pseudoId) return;
+    const addr = (session?.user as { stellarAddress?: string })?.stellarAddress;
+    if (!address || !addr) return;
 
     // Read directly from Stellar Horizon + IPFS — no backend call
-    readUserEscrows(pseudoId, address)
+    readUserEscrows(address)
       .then((data) => setEscrows(data))
       .catch(() => setEscrows([]))
       .finally(() => setLoading(false));

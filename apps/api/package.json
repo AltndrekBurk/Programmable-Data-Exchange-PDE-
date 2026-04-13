@@ -10,7 +10,7 @@
   },
   "dependencies": {
     "@pde/ipfs": "*",
-    "@pde/pseudonym": "*",
+
     "@pde/reclaim": "*",
     "@pde/stellar": "*",
     "@pde/storage": "*",

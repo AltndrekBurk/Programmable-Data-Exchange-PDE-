@@ -17,7 +17,7 @@
   "dependencies": {
     "@pde/ipfs": "*",
     "@pde/stellar": "*",
-    "@pde/pseudonym": "*",
+
     "@stellar/stellar-sdk": "^13.0.0"
   }
 }

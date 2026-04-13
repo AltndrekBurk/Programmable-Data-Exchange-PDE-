@@ -12,7 +12,6 @@ import { Hono } from 'hono'
 import { z } from 'zod'
 import { zValidator } from '@hono/zod-validator'
 import { Horizon } from '@stellar/stellar-sdk'
-import { generatePseudonym } from '@pde/pseudonym'
 import type { StorageService } from '@pde/storage'
 import { dispatchSkillToProviders } from '../lib/openclaw.js'
 
@@ -137,11 +136,6 @@ export function createNotifyRouter(storage: StorageService) {
       return c.json({ error: 'TX verification failed on Horizon' }, 400)
     }
 
-    const secret = process.env.PSEUDONYM_SECRET
-    if (!secret) return c.json({ error: 'PSEUDONYM_SECRET not configured' }, 500)
-
-    const creatorPseudo = generatePseudonym(secret, body.stellarAddress).pseudonym
-
     // Store in warm cache (no IPFS upload, no Stellar write — client already did that)
     const mcp = {
       id: body.id,
@@ -152,7 +146,7 @@ export function createNotifyRouter(storage: StorageService) {
       apiEndpoint: body.data.apiEndpoint,
       authType: body.data.authType,
       responseFormat: body.data.responseFormat ?? '',
-      creator: creatorPseudo,
+      creator: body.stellarAddress,
       creatorAddress: body.stellarAddress,
       usageFee: body.data.usageFee ?? 0.05,
       usageCount: 0,
@@ -306,12 +300,7 @@ export function createNotifyRouter(storage: StorageService) {
       return c.json({ error: 'TX verification failed on Horizon' }, 400)
     }
 
-    const secret = process.env.PSEUDONYM_SECRET
-    if (!secret) return c.json({ error: 'PSEUDONYM_SECRET not configured' }, 500)
-    const pseudoId = generatePseudonym(secret, body.stellarAddress).pseudonym
-
     const provider = {
-      pseudoId,
       stellarAddress: body.stellarAddress,
       dataSources: body.dataSources,
       supportedDataDescription: body.supportedDataDescription,
@@ -325,21 +314,21 @@ export function createNotifyRouter(storage: StorageService) {
     }
 
     // CID audit trail
-    const existingProvider = await storage.getProvider(pseudoId).catch(() => null)
+    const existingProvider = await storage.getProvider(body.stellarAddress).catch(() => null)
     if (existingProvider?.ipfsHash && existingProvider.ipfsHash !== body.ipfsHash) {
-      logCidChange('provider', pseudoId, existingProvider.ipfsHash, body.ipfsHash, body.stellarAddress)
+      logCidChange('provider', body.stellarAddress, existingProvider.ipfsHash, body.ipfsHash, body.stellarAddress)
     }
 
-    await storage.cacheOnly('provider', pseudoId, body.ipfsHash, provider)
+    await storage.cacheOnly('provider', body.stellarAddress, body.ipfsHash, provider)
 
     // Platform mirror pin (fire-and-forget)
-    mirrorPinCid(body.ipfsHash, `provider:${pseudoId}`).catch(() => {})
+    mirrorPinCid(body.ipfsHash, `provider:${body.stellarAddress}`).catch(() => {})
 
-    console.log(`[notify] Provider ${pseudoId.slice(0, 8)} registered — TX:${body.txHash.slice(0, 12)}`)
+    console.log(`[notify] Provider ${body.stellarAddress.slice(0, 8)} registered — TX:${body.txHash.slice(0, 12)}`)
 
     return c.json({
       status: 'accepted',
-      pseudoId,
+      stellarAddress: body.stellarAddress,
       ipfsHash: body.ipfsHash,
       txHash: body.txHash,
     })
@@ -363,12 +352,8 @@ export function createNotifyRouter(storage: StorageService) {
       return c.json({ error: 'TX verification failed on Horizon' }, 400)
     }
 
-    const secret = process.env.PSEUDONYM_SECRET
-    if (!secret) return c.json({ error: 'PSEUDONYM_SECRET not configured' }, 500)
-    const pseudoId = generatePseudonym(secret, body.stellarAddress).pseudonym
-
     // Update existing provider with new policy
-    const existing = await storage.getProvider(pseudoId)
+    const existing = await storage.getProvider(body.stellarAddress)
     if (!existing) return c.json({ error: 'Provider not found' }, 404)
 
     const updatedProvider = {
@@ -377,13 +362,13 @@ export function createNotifyRouter(storage: StorageService) {
       ipfsHash: body.ipfsHash,
     }
 
-    await storage.cacheOnly('provider', pseudoId, body.ipfsHash, updatedProvider)
+    await storage.cacheOnly('provider', body.stellarAddress, body.ipfsHash, updatedProvider)
 
-    console.log(`[notify] Policy updated for ${pseudoId.slice(0, 8)} — CID:${body.ipfsHash.slice(0, 12)}`)
+    console.log(`[notify] Policy updated for ${body.stellarAddress.slice(0, 8)} — CID:${body.ipfsHash.slice(0, 12)}`)
 
     return c.json({
       status: 'accepted',
-      pseudoId,
+      stellarAddress: body.stellarAddress,
       policyCid: body.ipfsHash,
       txHash: body.txHash,
     })

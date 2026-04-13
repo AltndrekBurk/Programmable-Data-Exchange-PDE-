@@ -92,7 +92,7 @@ interface ProviderPolicy {
 interface ProviderInfo {
   registered: boolean;
   dataSources?: string[];
-  pseudoId?: string;
+  stellarAddress?: string;
   policy?: ProviderPolicy;
 }
 
@@ -141,16 +141,16 @@ export default function SellDataPage() {
   useEffect(() => {
     if (status !== "authenticated" || !stellarAddress) return;
 
-    const pseudoId = (session?.user as { pseudoId?: string })?.pseudoId;
+    const addr = (session?.user as { stellarAddress?: string })?.stellarAddress;
 
     // Chain-first: read provider data from Stellar + IPFS
     const loadProvider = async () => {
       try {
         const platformAddr = getPlatformAddress();
-        if (!platformAddr || !pseudoId) return;
+        if (!platformAddr || !addr) return;
         const { readAccountData, PREFIXES } = await import("@/lib/stellar");
         const accountData = await readAccountData(platformAddr);
-        const providerKey = `${PREFIXES.provider}${pseudoId.slice(0, 24)}`;
+        const providerKey = `${PREFIXES.provider}${addr.slice(0, 24)}`;
         const cid = accountData.get(providerKey);
         if (cid) {
           const data = await fetchFromIpfs<Record<string, unknown>>(cid);
@@ -370,7 +370,7 @@ export default function SellDataPage() {
 
   /* ── Consent decision ── */
   const handleDecision = async (skillId: string, decision: "ACCEPT" | "REJECT") => {
-    if (!session?.user?.pseudoId || !stellarAddress) return;
+    if (!session?.user?.stellarAddress || !stellarAddress) return;
     setActionLoading(skillId);
 
     try {
@@ -379,7 +379,7 @@ export default function SellDataPage() {
       if (decision === "ACCEPT") {
         const hash = await freighter.signAndSubmitConsentTx(
           skillId,
-          session.user.pseudoId,
+          session.user.stellarAddress,
           stellarAddress,
           "ACCEPT"
         );
@@ -394,7 +394,7 @@ export default function SellDataPage() {
         method: "POST",
         body: JSON.stringify({
           skillId,
-          pseudoId: session.user.pseudoId,
+          stellarAddress: session.user.stellarAddress,
           decision,
           ...(txHash ? { txHash, publicKey: stellarAddress } : {}),
         }),

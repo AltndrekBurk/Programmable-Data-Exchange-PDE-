@@ -8,19 +8,16 @@ declare module "next-auth" {
       email?: string | null;
       image?: string | null;
       stellarAddress: string;
-      pseudoId: string;
     };
   }
   interface User {
     stellarAddress: string;
-    pseudoId: string;
   }
 }
 
 declare module "next-auth/jwt" {
   interface JWT {
     stellarAddress: string;
-    pseudoId: string;
   }
 }
 
@@ -36,7 +33,6 @@ export interface UserProfile {
   id: string;
   name: string | null;
   stellarAddress: string;
-  pseudoId: string;
   createdAt: Date;
   updatedAt: Date;
 }

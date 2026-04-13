@@ -154,13 +154,12 @@ Web API'si olan her kaynak MVP kapsamında — onay sürecinden geçer.
 - packages/stellar — Horizon SSE + consent TX
 - packages/reclaim — zkFetch Fitbit/Strava + verifyProof
 - packages/ipfs — Pinata upload/download
-- packages/pseudonym — HMAC pseudo_id
 - apps/api (Hono) — skills, proofs, consent, auth route'ları
   - GET /api/auth/challenge — 5 dakika geçerli tek kullanımlık nonce
-  - POST /api/auth/verify — Ed25519 imza doğrulama + pseudoId üretimi
+  - POST /api/auth/verify — Ed25519 imza doğrulama + stellarAddress döner
   - POST /api/skills — gerçek IPFS upload (PINATA_JWT varsa)
   - POST /api/proofs/submit — gerçek verifyDataProof()
-  - POST /api/consent/notify — stellarAddress → pseudoId otomatik türetme
+  - POST /api/consent/notify — stellarAddress ile consent kaydı
 - apps/web (Next.js) — Stellar cüzdan girişi
   - src/hooks/useFreighter.ts — Freighter bağlantı + imzalama hook
   - src/app/(auth)/login/page.tsx — 4 adımlı wallet connect akışı
@@ -180,8 +179,8 @@ Web API'si olan her kaynak MVP kapsamında — onay sürecinden geçer.
 3. GET /api/auth/challenge?address=G... → challenge string
 4. Freighter ile challenge imzalanır (signMessage)
 5. NextAuth credentials: { publicKey, signature, challenge }
-6. POST /api/auth/verify → Ed25519 doğrulama → pseudoId üretimi
-7. Session: { stellarAddress, pseudoId } — gerçek kimlik hiçbir yerde saklanmaz
+6. POST /api/auth/verify → Ed25519 doğrulama → stellarAddress döner
+7. Session: { stellarAddress } — gerçek kimlik hiçbir yerde saklanmaz
 ```
 
 ### Sonraki adımlar
@@ -318,7 +317,6 @@ dataEconomy/
 │   ├── ipfs/
 │   ├── stellar/
 │   ├── reclaim/
-│   ├── pseudonym/
 │   └── storage/
 ├── contracts/
 │   ├── escrow/
