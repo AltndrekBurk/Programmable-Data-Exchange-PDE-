@@ -1,391 +1,92 @@
-# AGENT.md — OpenClaw Integration for dataEconomy
+# AGENT.md — OpenClaw Agent Guide for PDE
 
-**Version**: 2.0
-**Last Updated**: 2026-03-09
-**Target**: OpenClaw self-hosted AI gateway users
+**Version**: 3.0
+**Last Updated**: 2026-04-13
+**Model**: Agent-to-Agent (buyer bot ↔ seller bot)
 
 ---
 
 ## Overview
 
-OpenClaw is a self-hosted AI gateway that receives task notifications from the dataEconomy platform via the `/hooks/agent` endpoint and acts as the interface between users and the data economy flow. This document defines how OpenClaw integrates with dataEconomy to handle consent decisions, execute data extraction, generate ZK proofs, and return results.
+PDE uses OpenClaw bots as the primary interface for both buyers and sellers. Users interact through WhatsApp, Telegram, or Discord. Their bot handles everything: creating tasks, discovering providers, generating proofs, making payments, and delivering data.
 
-**Key role**: OpenClaw listens for Stellar consent transactions, extracts data from APIs (Fitbit, Strava, etc.), generates ZK-TLS proofs via Reclaim Protocol, and submits proofs back to the platform with X402 payment.
+**Two agent types:**
+- **Buyer Agent**: Creates data requests, locks escrow, verifies proofs, pays per batch, decrypts data.
+- **Seller Agent**: Publishes data policy, watches for matching requests, generates ZK proofs, delivers encrypted data row-by-row.
+
+**The PDE server is optional.** Agents communicate through Stellar + IPFS. If the server is down, agents continue to transact.
 
 ---
 
 ## Architecture
 
 ```
-User (WhatsApp/Telegram/Discord)
-    ↕
-OpenClaw (self-hosted, AI agent + MCP tools)
-    ↕
-Stellar (consent TX listener via Horizon SSE)
-    ↕
-dataEconomy Platform (POST /hooks/agent → notifications)
-                   (POST /api/proofs/submit ← proof delivery)
-                   (Stellar + USDC escrow)
+Buyer (WhatsApp/Telegram/Discord)        Seller (WhatsApp/Telegram/Discord)
+         │                                          │
+         ▼                                          ▼
+┌─────────────────┐    Stellar + IPFS    ┌─────────────────┐
+│  Buyer Agent    │◄════════════════════►│  Seller Agent   │
+│  (OpenClaw)     │                      │  (OpenClaw)     │
+│                 │    ┌───────────┐     │                 │
+│ - Create skill  │    │ Soroban   │     │ - Policy IPFS   │
+│ - Lock escrow   │───►│ Escrow    │◄────│ - Watch skills  │
+│ - Verify proofs │    │ Contract  │     │ - ZK proof gen  │
+│ - x402 pay      │    └───────────┘     │ - Encrypt data  │
+│ - Decrypt data  │                      │ - Batch deliver │
+└────────┬────────┘    ┌───────────┐     └────────┬────────┘
+         │             │ Attestor  │              │
+         │             │ Core      │◄─────────────┘
+         │             │ (TLS      │    zkFetch()
+         │             │  witness) │
+         │             └───────────┘
+         │
+         │  (Optional — enhances but not required)
+         ▼
+┌──────────────────────────┐
+│  PDE Server              │
+│  - Warm cache            │
+│  - Push notifications    │
+│  - Dispute admin         │
+│  - Analytics             │
+└──────────────────────────┘
 ```
-
-### Data Flow
-
-1. **Skill Creation** — Requester creates/uploads skill to platform
-2. **Escrow Deposit** — USDC locked in Soroban contract
-3. **OpenClaw Notification** — Platform sends `POST /hooks/agent` with task details
-4. **User Decision** — User replies "evet"/"hayır" (yes/no) via messaging app
-5. **Consent TX** — Backend records decision on Stellar (memo: `CONSENT:...`)
-6. **OpenClaw Listener** — Horizon SSE detects consent TX
-7. **Data Extraction** — OpenClaw tool executes (Fitbit/Strava OAuth → API call)
-8. **ZK Proof** — Reclaim zkFetch wraps API response in ZK-TLS proof
-9. **Proof Submission** — POST `/api/proofs/submit` with X402 payment header
-10. **Escrow Release** — Soroban 3-way split atomically executed
-11. **Result Delivery** — Encrypted proof bundle sent to requester
 
 ---
 
-## Setup Instructions
+## Setup: Seller Agent
 
 ### 1. Deploy OpenClaw
 
 ```bash
-# Clone OpenClaw repository
 git clone https://github.com/nicholasgriffintn/openclaw.git
-cd openclaw
+cd openclaw && npm install
 
-# Install dependencies
-npm install
-
-# Create .env.local (or equivalent for your deployment)
+# .env
 OPENCLAW_PORT=3002
 OPENCLAW_TOKEN=<secure-random-token>
 
-# Supported channels
+# Messaging channels
 WHATSAPP_BUSINESS_ACCOUNT_ID=<your-whatsapp-account>
 TELEGRAM_BOT_TOKEN=<your-telegram-token>
 DISCORD_BOT_TOKEN=<your-discord-token>
 
-# Stellar + dataEconomy
-STELLAR_PLATFORM_ACCOUNT=<platform-public-address>
-STELLAR_TESTNET_URL=https://horizon-testnet.stellar.org
+# Stellar (seller's own keypair)
+STELLAR_SELLER_SECRET=S...seller_secret_key
+STELLAR_SELLER_PUBLIC=G...seller_public_key
 
-# ZK-TLS (self-hosted attestor-core — no APP_ID needed)
+# Platform account (for SSE watching)
+STELLAR_PLATFORM_ACCOUNT=G...platform_public_key
+HORIZON_TESTNET=https://horizon-testnet.stellar.org
+
+# ZK-TLS (self-hosted attestor — no APP_ID needed)
 ATTESTOR_URL=http://localhost:8001
-# Optional: Reclaim hosted fallback (not required with self-hosted attestor)
-# RECLAIM_APP_ID=<your-reclaim-app-id>
-# RECLAIM_APP_SECRET=<your-reclaim-app-secret>
 
-# Start the gateway
 npm run dev
 ```
 
-### 2. Register with dataEconomy Platform
-
-As a data provider, register on the platform:
-
-1. Visit `/register/provider` on dataEconomy web app
-2. Authenticate with your Stellar Freighter wallet
-3. Mark supported data types: **API** (MVP) or **Device** (Phase 2)
-4. Register OpenClaw credentials:
-   - **OpenClaw URL**: `https://your-openclaw.example.com`
-   - **OpenClaw Token**: The `OPENCLAW_TOKEN` from .env
-   - **Channels**: Select WhatsApp, Telegram, and/or Discord
-   - **Addresses**: +90... (WhatsApp), @username (Telegram), Discord ID
-
-### 3. Configure MCP Tools
-
-OpenClaw uses Model Context Protocol (MCP) tools to extract data. These are defined in your local configuration:
-
-```
-openclaw/
-├── tools/
-│   ├── fitbit-oauth.json          # OAuth flow + token refresh
-│   ├── strava-oauth.json
-│   ├── spotify-oauth.json
-│   ├── google-fit-oauth.json
-│   └── custom-provider.json       # Template for new sources
-├── config/
-│   └── dataeconomy.config.ts      # Platform integration settings
-└── agents/
-    └── data-provider.ts           # Main agent logic
-```
-
----
-
-## Message Format: POST /hooks/agent
-
-### Request Payload
-
-Platform sends notifications to your OpenClaw instance via:
+### 2. Deploy Attestor-Core
 
 ```bash
-POST /hooks/agent
-Authorization: Bearer <OPENCLAW_TOKEN>
-Content-Type: application/json
-
-{
-  "message": "📊 Yeni veri görevi mevcut!\n\nSkill: 8d5f4b1a...\n\nKabul etmek için \"evet\", reddetmek için \"hayır\" yaz.",
-  "name": "DataEconomy-Notify",
-  "agentId": "main",
-  "sessionKey": "skill:8d5f4b1a-...:a7f3x9k2m1p8q4r5",
-  "wakeMode": "now",
-  "deliver": true,
-  "channel": "whatsapp",
-  "to": "+90501234567"
-}
-```
-
-### Field Reference
-
-| Field | Type | Required | Description |
-|---|---|---|---|
-| `message` | string | Yes | Notification text (emoji safe). Informs user of task details. |
-| `name` | string | Yes | Always `"DataEconomy-Notify"` — identifies message source |
-| `agentId` | string | Yes | Agent handling the task. Use `"main"` for single-agent setup. |
-| `sessionKey` | string | Yes | Format: `skill:{skillId}:{pseudoId}` — groups related messages. |
-| `wakeMode` | string | Yes | Always `"now"` — deliver immediately. |
-| `deliver` | boolean | Yes | Always `true` — actually send the message. |
-| `channel` | enum | Yes | `"whatsapp"`, `"telegram"`, or `"discord"` |
-| `to` | string | Yes | Recipient: `+90...` (WhatsApp), `@username` (Telegram), Discord ID |
-
-### Response (from OpenClaw)
-
-```json
-{
-  "success": true,
-  "messageId": "msg_abc123",
-  "deliveredAt": "2026-03-01T14:23:45.000Z"
-}
-```
-
----
-
-## Consent Flow: User Decision Handling
-
-### User Messages
-
-User responds via their messaging app:
-
-| Response | Meaning | Stellar TX Memo |
-|---|---|---|
-| `evet` / `yes` / `✅` | Accept task | `CS:8d5f4b1a:a7f3x9k2:A` |
-| `hayır` / `no` / `❌` | Reject task | `CS:8d5f4b1a:a7f3x9k2:R` |
-
-### OpenClaw Agent Logic (Pseudocode)
-
-```typescript
-agent.onMessage(async (msg) => {
-  // 1. Extract sessionKey from context
-  const sessionKey = msg.sessionKey; // "skill:8d5f4b1a-...:a7f3x9k2..."
-  const [_, skillId, pseudoId] = sessionKey.split(':');
-
-  // 2. Parse decision
-  const decision = parseConsent(msg.text);
-  if (!decision) {
-    agent.reply("Anlamadım. \"evet\" veya \"hayır\" cevabı veriniz.", msg);
-    return;
-  }
-
-  // 3. Record consent to Stellar
-  const result = await recordConsent({
-    skillId,
-    pseudoId,
-    decision, // "ACCEPT" | "REJECT"
-  });
-
-  if (result.success) {
-    agent.reply(
-      `Karar kaydedildi (TX: ${result.txHash.slice(0, 8)}...).\n` +
-      (decision === "ACCEPT"
-        ? "Veri çekme başlayacak..."
-        : "Görev reddedildi."),
-      msg
-    );
-  } else {
-    agent.reply("Karar kaydedilemedi. Lütfen tekrar deneyin.", msg);
-  }
-
-  // 4. If ACCEPT, trigger data extraction
-  if (decision === "ACCEPT") {
-    extractAndProveData(skillId, pseudoId, msg);
-  }
-});
-```
-
-### Recording Consent to Platform
-
-OpenClaw POSTs the user's decision back to the platform's consent endpoint:
-
-```bash
-POST /api/consent/record
-Content-Type: application/json
-
-{
-  "skillId": "8d5f4b1a-abcd-1234-efgh-567890ijklmn",
-  "pseudoId": "a7f3x9k2m1p8q4r5",
-  "decision": "ACCEPT"
-}
-```
-
-**Response**:
-```json
-{
-  "status": "recorded",
-  "memo": "CS:8d5f4b1a:a7f3x9k2:A",
-  "stellarTx": "3e6c7d...",
-  "decision": "ACCEPT",
-  "timestamp": "2026-03-01T14:24:30.000Z"
-}
-```
-
----
-
-## Data Extraction: MCP Tools
-
-After user accepts task, OpenClaw executes the appropriate MCP tool based on the skill's `dataSource`.
-
-### Tool: fitbit-oauth
-
-**Purpose**: Extract Fitbit steps, heart rate, sleep, weight data.
-
-**MCP Definition**:
-```json
-{
-  "name": "fitbit-oauth",
-  "description": "Authenticate user with Fitbit and extract health metrics via ZK-TLS proof",
-  "inputSchema": {
-    "type": "object",
-    "properties": {
-      "metric": {
-        "type": "string",
-        "enum": ["steps", "heart_rate", "sleep", "weight"],
-        "description": "Fitbit metric to prove"
-      },
-      "accessToken": {
-        "type": "string",
-        "description": "OAuth 2.0 access token from Fitbit (user provides via OAuth flow)"
-      }
-    },
-    "required": ["metric", "accessToken"]
-  },
-  "output": {
-    "type": "object",
-    "properties": {
-      "proof": { "type": "object", "description": "Reclaim ZK-TLS proof" },
-      "timestamp": { "type": "string", "description": "ISO timestamp when proof was created" }
-    }
-  }
-}
-```
-
-**Execution**:
-```typescript
-const result = await callMCPTool("fitbit-oauth", {
-  metric: "steps",
-  accessToken: userFitbitToken,
-});
-
-// result.proof is a ReclaimProof object
-// result.timestamp is when it was generated
-```
-
-### Tool: strava-oauth
-
-**Purpose**: Extract Strava running distance, elevation, moving time.
-
-```json
-{
-  "name": "strava-oauth",
-  "description": "Extract Strava athlete stats via ZK-TLS proof",
-  "inputSchema": {
-    "type": "object",
-    "properties": {
-      "metric": {
-        "type": "string",
-        "enum": ["distance", "moving_time", "elapsed_time", "total_elevation_gain"],
-        "description": "Strava metric to prove"
-      },
-      "accessToken": {
-        "type": "string",
-        "description": "OAuth 2.0 access token from Strava"
-      }
-    },
-    "required": ["metric", "accessToken"]
-  }
-}
-```
-
-### Tool: spotify-oauth
-
-**Purpose**: Extract Spotify listening statistics.
-
-```json
-{
-  "name": "spotify-oauth",
-  "description": "Extract user's top tracks, artists, listening time",
-  "inputSchema": {
-    "type": "object",
-    "properties": {
-      "metric": {
-        "type": "string",
-        "enum": ["top_tracks", "top_artists", "recently_played", "listening_time"],
-        "description": "Spotify metric"
-      },
-      "accessToken": { "type": "string" },
-      "timeRange": {
-        "type": "string",
-        "enum": ["short_term", "medium_term", "long_term"],
-        "description": "Time range for Spotify API"
-      }
-    },
-    "required": ["metric", "accessToken"]
-  }
-}
-```
-
-### Defining Custom Tools
-
-For new data sources (e.g., Plaid, Google Fit, Garmin), create a template:
-
-```json
-{
-  "name": "custom-provider",
-  "description": "Template for new OAuth-based data sources",
-  "inputSchema": {
-    "type": "object",
-    "properties": {
-      "provider": {
-        "type": "string",
-        "description": "API provider name (e.g., 'plaid', 'google-fit')"
-      },
-      "metric": {
-        "type": "string",
-        "description": "Specific metric/endpoint to extract"
-      },
-      "accessToken": {
-        "type": "string",
-        "description": "OAuth 2.0 access token for the provider"
-      },
-      "parameters": {
-        "type": "object",
-        "description": "Provider-specific parameters (e.g., account_id for Plaid)"
-      }
-    },
-    "required": ["provider", "metric", "accessToken"]
-  }
-}
-```
-
----
-
-## ZK-TLS Setup: Self-Hosted Attestor-Core
-
-Before generating proofs, you need a running attestor-core instance. The attestor acts as a TLS witness — it independently connects to the source API, observes the response, and signs a claim with its ed25519 private key.
-
-### Deploy Attestor-Core
-
-```bash
-# Clone and install
 git clone https://github.com/reclaimprotocol/attestor-core
 cd attestor-core && npm install
 
@@ -397,447 +98,568 @@ console.log('PRIVATE_KEY=' + kp.privateKey.export({type:'pkcs8',format:'der'}).t
 console.log('PUBLIC_KEY=' + kp.publicKey.export({type:'spki',format:'der'}).toString('hex'));
 "
 
-# Set private key in .env
-echo "PRIVATE_KEY=<private-key-hex-from-above>" > .env
-
-# Start (port 8001)
-npm run start:tsc
+echo "PRIVATE_KEY=<private-key-hex>" > .env
+npm run start:tsc  # Port 8001
 ```
 
-### Configure OpenClaw
+### 3. Register Policy on IPFS + Stellar
 
-In your OpenClaw `.env`:
-```env
-ATTESTOR_URL=http://localhost:8001  # or your remote attestor address
+The seller agent publishes a policy describing what data it offers:
+
+```typescript
+const policy = {
+  stellarAddress: "G...seller_address",
+  dataSources: ["fitbit", "strava"],
+  allowedMetrics: ["steps", "distance", "moving_time"],
+  deniedMetrics: ["heart_rate", "sleep"],
+  minPrice: 0.50,
+  maxRowsPerRequest: 500,
+  autoAccept: false,
+  contactChannel: "whatsapp",
+  contactId: "+90501234567",
+  attestorUrl: "http://localhost:8001",
+  createdAt: new Date().toISOString(),
+  policyVersion: 1
+};
+
+// 1. Upload to IPFS
+const cid = await uploadJson(policy, { name: `policy-${address}.json` });
+
+// 2. Index on Stellar
+const tx = new TransactionBuilder(account, { fee: BASE_FEE })
+  .addOperation(Operation.manageData({
+    name: `pr:${address.slice(0, 24)}`,
+    value: cid
+  }))
+  .setTimeout(30)
+  .build();
+tx.sign(sellerKeypair);
+await server.submitTransaction(tx);
 ```
-
-### Configure Platform API
-
-In the dataEconomy platform `.env`:
-```env
-ATTESTOR_PUBLIC_KEYS=<public-key-hex-from-above>
-```
-
-The platform will only accept proofs signed by attestors whose public keys are listed in `ATTESTOR_PUBLIC_KEYS`.
-
-### How It Works
-
-```
-OpenClaw → zkFetch(apiUrl) → Attestor-Core → Source API (Fitbit/Strava)
-                                    │
-                              TLS Witness:
-                              - Opens own TLS connection
-                              - Reads raw response
-                              - Signs sha256(claimData) with ed25519
-                              - Returns proof with signature
-                                    │
-                              ← ReclaimProof { claimData, signatures[], witnesses[] }
-```
-
-The attestor **never stores** raw data. It only signs a hash of what it saw.
 
 ---
 
-## Proof Generation & Submission
+## Setup: Buyer Agent
 
-### Generating ZK-TLS Proofs
-
-After data extraction via MCP tool, OpenClaw receives a `ReclaimProof` object. The proof structure:
-
-```typescript
-interface ReclaimProof {
-  identifier: string;                    // User's pseudonymous ID
-  claimData: {
-    provider: string;                    // "fitbit", "strava", etc.
-    parameters: string;                  // API endpoint/parameters
-    owner: string;                       // Attester public key
-    timestampS: number;                  // Proof creation time (Unix)
-    context: string;                     // Witness commitment
-    identifier: string;
-    epoch: number;                       // Reclaim attestor epoch
-  };
-  signatures: string[];                  // Reclaim attestor signature(s)
-  witnesses: Array<{ id: string; url: string }>; // Witness servers
-  extractedParameterValues?: {
-    [key: string]: string;              // Extracted metric values (optional reveal)
-  };
-}
-```
-
-### Submitting Proof with X402 Payment
-
-After generating proof, OpenClaw submits it to the platform with X402 payment header:
+### 1. Deploy OpenClaw (same as seller)
 
 ```bash
-POST /api/proofs/submit
-Authorization: Bearer <X402-token>
-X-Payment: <X402-payment-header>
-Content-Type: application/json
-
-{
-  "skillId": "8d5f4b1a-abcd-1234-efgh-567890ijklmn",
-  "pseudoId": "a7f3x9k2m1p8q4r5",
-  "dataSource": "fitbit",
-  "metric": "steps",
-  "proof": {
-    "identifier": "...",
-    "claimData": { ... },
-    "signatures": [ ... ],
-    "witnesses": [ ... ]
-  },
-  "timestamp": "2026-03-01T14:25:15.000Z"
-}
+# .env additions for buyer
+STELLAR_BUYER_SECRET=S...buyer_secret_key
+STELLAR_BUYER_PUBLIC=G...buyer_public_key
 ```
 
-### X402 Payment (Spam Prevention)
+### 2. No Attestor Needed
 
-**X402** is an HTTP ödeme protokolü implemented via OpenZeppelin Relayer on Stellar.
-
-**Before submitting proof:**
-
-1. Obtain X402 challenge from the facilitator
-2. Include Stellar signature in `X-Payment` header
-3. Submit proof with X402 token
-
-**In OpenClaw**:
-
-```typescript
-// 1. Get X402 challenge
-const challengeRes = await fetch("https://channels.openzeppelin.com/x402/testnet/challenge");
-const { challenge } = await challengeRes.json();
-
-// 2. Sign challenge with your keypair
-const signature = yourKeypair.sign(Buffer.from(challenge)).toString('base64');
-
-// 3. Include in proof submission
-const proofRes = await fetch(`${PLATFORM_URL}/api/proofs/submit`, {
-  method: 'POST',
-  headers: {
-    'X-Payment': `Bearer ${signature}`,
-    'Content-Type': 'application/json',
-  },
-  body: JSON.stringify({ skillId, pseudoId, proof }),
-});
-```
-
-### Response from Platform
-
-```json
-{
-  "status": "verified",
-  "skillId": "8d5f4b1a-...",
-  "pseudoId": "a7f3x9k2m1p8q4r5",
-  "proofHash": "sha256:9f8e7d6c...",
-  "escrowReleased": true,
-  "timestamp": "2026-03-01T14:25:30.000Z"
-}
-```
-
-If verification fails:
-
-```json
-{
-  "status": "rejected",
-  "reason": "Invalid ZK signature",
-  "timestamp": "2026-03-01T14:25:30.000Z"
-}
-```
+Buyer only verifies proofs — doesn't generate them. Buyer needs the attestor's **public key** (from seller's policy or well-known list).
 
 ---
 
-## Horizon SSE Listener (Stellar Consent Monitoring)
+## Seller Agent: Core Logic
 
-OpenClaw maintains a persistent Horizon SSE listener on the platform's Stellar account to detect consent transactions in real-time.
-
-### Setup
+### Watching for New Skills
 
 ```typescript
-import { streamConsentTransactions } from '@dataeconomy/stellar';
+import { Server } from 'stellar-sdk';
 
-const platformAccount = process.env.STELLAR_PLATFORM_ACCOUNT;
+const server = new Server('https://horizon-testnet.stellar.org');
+const platformAddress = process.env.STELLAR_PLATFORM_ACCOUNT;
 
-const unsubscribe = streamConsentTransactions(platformAccount, (tx) => {
-  // Memo format: "CONSENT:skillId:pseudoId:ACCEPT|REJECT"
-  console.log(`Consent received: ${tx.skillId} → ${tx.decision}`);
+// Watch for new manage_data entries
+function watchForSkills(onNewSkill: (skillCid: string, skillId: string) => void) {
+  // Poll or SSE for account data changes
+  const es = server.accounts()
+    .accountId(platformAddress)
+    .stream({
+      onmessage: async (account) => {
+        for (const [key, value] of Object.entries(account.data_attr)) {
+          if (key.startsWith('sk:')) {
+            const skillId = key.slice(3);
+            const cid = Buffer.from(value, 'base64').toString('utf8');
+            onNewSkill(cid, skillId);
+          }
+        }
+      }
+    });
+}
+```
 
-  // Trigger data extraction if ACCEPT
-  if (tx.decision === 'ACCEPT') {
-    triggerDataExtraction(tx.skillId, tx.userId);
+### Policy Evaluation
+
+```typescript
+async function evaluateSkill(skillCid: string, policy: SellerPolicy): Promise<boolean> {
+  // Fetch skill from IPFS
+  const skill = await fetchFromIpfs(skillCid);
+  
+  // Check data source
+  if (!policy.dataSources.includes(skill.dataSource)) return false;
+  
+  // Check metrics
+  for (const metric of skill.metrics) {
+    if (policy.deniedMetrics.includes(metric)) return false;
+  }
+  
+  // Check price
+  if (skill.budget < policy.minPrice) return false;
+  
+  // Check row limits
+  const estimatedRows = estimateRowCount(skill.duration);
+  if (estimatedRows > policy.maxRowsPerRequest) return false;
+  
+  return true;
+}
+```
+
+### User Consent Flow
+
+```typescript
+agent.onMessage(async (msg) => {
+  const pendingTask = getPendingTask(msg.sessionKey);
+  if (!pendingTask) return;
+  
+  const decision = parseConsent(msg.text); // "evet"→ACCEPT, "hayir"→REJECT
+  if (!decision) {
+    agent.reply("Anlamadim. 'evet' veya 'hayir' cevabi veriniz.", msg);
+    return;
+  }
+  
+  if (decision === 'ACCEPT') {
+    // Write consent to Stellar
+    const tx = new TransactionBuilder(account, { fee: BASE_FEE })
+      .addOperation(Operation.manageData({
+        name: `cs:${pendingTask.skillId}:${sellerAddr.slice(0, 4)}`,
+        value: 'ACCEPT'
+      }))
+      .setTimeout(30)
+      .build();
+    tx.sign(sellerKeypair);
+    await server.submitTransaction(tx);
+    
+    agent.reply(`Kabul edildi! Escrow kilidi bekleniyor...`, msg);
+    
+    // Wait for escrow lock, then start delivery
+    waitForEscrowAndDeliver(pendingTask.skillId, pendingTask.skill);
+  } else {
+    agent.reply(`Gorev reddedildi.`, msg);
   }
 });
-
-// When shutting down:
-// unsubscribe();
 ```
 
-### Memo Parsing
+### Row-by-Row Data Delivery
 
-Platform writes memos like: `CONSENT:8d5f4b1a:a7f3x9k2:ACCEPT`
-
-**OpenClaw parses** as:
-- `skillId` = `8d5f4b1a`
-- `pseudoId` = `a7f3x9k2`
-- `decision` = `ACCEPT` or `REJECT`
+```typescript
+async function deliverData(skill: Skill, escrowId: string) {
+  const totalRows = estimateRowCount(skill.duration);
+  const batchSize = skill.batchSize || 10;
+  const totalBatches = Math.ceil(totalRows / batchSize);
+  
+  for (let batchIndex = 0; batchIndex < totalBatches; batchIndex++) {
+    // 1. Generate ZK proofs for this batch
+    const rows = [];
+    for (let i = 0; i < batchSize; i++) {
+      const rowIndex = batchIndex * batchSize + i;
+      if (rowIndex >= totalRows) break;
+      
+      // zkFetch through attestor-core
+      const proof = await zkFetch(
+        `https://api.fitbit.com/1/user/-/activities/steps/date/${getDate(rowIndex)}/1d.json`,
+        { headers: { Authorization: `Bearer ${oauthToken}` } },
+        { attestorUrl: process.env.ATTESTOR_URL }
+      );
+      
+      // Encrypt row data with buyer's deliveryPublicKey
+      const encrypted = nacl.box(
+        Buffer.from(JSON.stringify(proof.extractedParameterValues)),
+        randomNonce(),
+        buyerDeliveryPubKey,
+        ephemeralSecretKey
+      );
+      
+      rows.push({ encrypted: base64(encrypted), proof });
+    }
+    
+    // 2. Bundle batch
+    const batch = {
+      batchIndex,
+      totalBatches,
+      escrowId,
+      rows,
+      batchHash: sha256(rows.map(r => r.proof.identifier).join(':')),
+      sellerAddress: sellerPublicKey
+    };
+    
+    // 3. Upload batch to IPFS
+    const batchCid = await uploadJson(batch, {
+      name: `batch-${escrowId}-${batchIndex}.json`
+    });
+    
+    // 4. Index on Stellar
+    const tx = new TransactionBuilder(account, { fee: BASE_FEE })
+      .addOperation(Operation.manageData({
+        name: `bt:${escrowId.slice(0, 20)}:${batchIndex}`,
+        value: batchCid
+      }))
+      .setTimeout(30)
+      .build();
+    tx.sign(sellerKeypair);
+    await server.submitTransaction(tx);
+    
+    // 5. Wait for x402 payment from buyer
+    agent.reply(`📦 Batch ${batchIndex + 1}/${totalBatches} teslim edildi. Odeme bekleniyor...`, msg);
+    await waitForBatchPayment(escrowId, batchIndex);
+    
+    agent.reply(`✅ Batch ${batchIndex + 1} odemesi alindi. Devam ediliyor...`, msg);
+  }
+  
+  agent.reply(`🎉 Tum veriler teslim edildi! Escrow release bekleniyor...`, msg);
+}
+```
 
 ---
 
-## Notification Message Templates
+## Buyer Agent: Core Logic
 
-### Task Offered (English)
+### Watching for Batch Deliveries
 
-```
-📊 New data task available!
-
-Skill: Fitbit Steps (90 days)
-Reward: 1.50 USDC
-Duration: Ongoing
-
-Reply "yes" to accept, "no" to decline.
-```
-
-### Task Offered (Turkish)
-
-```
-📊 Yeni veri görevi mevcut!
-
-Skill: Fitbit Adım (90 gün)
-Ödül: 1.50 USDC
-Süre: Devam ediyor
-
-Kabul etmek için "evet", reddetmek için "hayır" yaz.
-```
-
-### Consent Recorded
-
-```
-✅ Karar kaydedildi!
-Kimlik: b8a...
-Veri çekme başlıyor...
+```typescript
+function watchForBatches(escrowId: string, onBatch: (batchCid: string, idx: number) => void) {
+  // Watch Stellar for new "bt:{escrowId}:{idx}" entries
+  const prefix = `bt:${escrowId.slice(0, 20)}:`;
+  
+  server.accounts()
+    .accountId(platformAddress)
+    .stream({
+      onmessage: async (account) => {
+        for (const [key, value] of Object.entries(account.data_attr)) {
+          if (key.startsWith(prefix)) {
+            const idx = parseInt(key.split(':')[2]);
+            const cid = Buffer.from(value, 'base64').toString('utf8');
+            onBatch(cid, idx);
+          }
+        }
+      }
+    });
+}
 ```
 
-### Data Extraction Started
+### Proof Verification + Payment
+
+```typescript
+import { ed25519 } from '@noble/curves/ed25519';
+import { sha256 } from '@noble/hashes/sha256';
+
+async function processBatch(batchCid: string, batchIndex: number, escrowId: string) {
+  // 1. Fetch batch from IPFS
+  const batch = await fetchFromIpfs(batchCid);
+  
+  // 2. Verify each row's proof
+  for (const row of batch.rows) {
+    const proof = row.proof;
+    const claimHash = sha256(canonicalJson(proof.claimData));
+    
+    for (const sig of proof.signatures) {
+      const witnessKey = proof.witnesses[0]?.id;
+      
+      // Verify ed25519 signature
+      const valid = ed25519.verify(
+        hexToBytes(sig),
+        claimHash,
+        hexToBytes(witnessKey)
+      );
+      
+      if (!valid) {
+        agent.reply(`❌ Batch ${batchIndex}: gecersiz ZK kaniti! Odeme yapilmadi.`, msg);
+        return false;
+      }
+      
+      // Check attestor is trusted
+      if (!TRUSTED_ATTESTOR_KEYS.includes(witnessKey)) {
+        agent.reply(`❌ Batch ${batchIndex}: bilinmeyen attestor! Reddedildi.`, msg);
+        return false;
+      }
+    }
+    
+    // 3. Decrypt row data
+    const plaintext = nacl.box.open(
+      base64ToBytes(row.encrypted),
+      buyerPrivateKey
+    );
+    
+    // Store decrypted data locally
+    storeRow(escrowId, batchIndex, plaintext);
+  }
+  
+  // 4. All rows valid → send x402 micro-payment
+  const batchPrice = totalBudget / batch.totalBatches;
+  
+  const tx = new TransactionBuilder(buyerAccount, { fee: BASE_FEE })
+    .addOperation(Operation.payment({
+      destination: batch.sellerAddress,
+      asset: USDC_ASSET,
+      amount: batchPrice.toFixed(7)
+    }))
+    .addMemo(Memo.text(`x402:${escrowId.slice(0, 8)}:${batchIndex}`))
+    .setTimeout(30)
+    .build();
+  tx.sign(buyerKeypair);
+  await server.submitTransaction(tx);
+  
+  agent.reply(`✅ Batch ${batchIndex + 1}: dogrulandi + odendi (${batchPrice} USDC)`, msg);
+  return true;
+}
+```
+
+### Final Escrow Release
+
+```typescript
+async function finalRelease(escrowId: string, allProofHashes: string[]) {
+  // Aggregate proof hash
+  const aggregateHash = sha256(allProofHashes.join(':'));
+  const aggregateProof = { hashes: allProofHashes, aggregate: aggregateHash };
+  
+  // Upload aggregate proof to IPFS
+  const proofCid = await uploadJson(aggregateProof, {
+    name: `proof-aggregate-${escrowId}.json`
+  });
+  
+  // Set proof on Soroban contract
+  await callSoroban('set_proof', {
+    escrow_id: escrowId,
+    proof_cid: proofCid,
+    proof_hash: hex(aggregateHash)
+  });
+  
+  // Release escrow (atomic 3-way split)
+  await callSoroban('release', { escrow_id: escrowId });
+  
+  agent.reply(
+    `🎉 Tamamlandi!\n` +
+    `Tum veriler alindi ve dogrulandi.\n` +
+    `Escrow serbest birakildi.\n` +
+    `Toplam: ${totalRows} satir, ${totalBatches} batch.`,
+    msg
+  );
+}
+```
+
+---
+
+## MCP Tools (Data Extraction)
+
+OpenClaw uses MCP tools to extract data from APIs. These run inside the seller agent.
+
+### fitbit-oauth
+
+```json
+{
+  "name": "fitbit-oauth",
+  "description": "Extract Fitbit health metrics via ZK-TLS proof",
+  "inputSchema": {
+    "type": "object",
+    "properties": {
+      "metric": {
+        "type": "string",
+        "enum": ["steps", "heart_rate", "sleep", "weight"]
+      },
+      "accessToken": { "type": "string" },
+      "date": { "type": "string", "format": "date" }
+    },
+    "required": ["metric", "accessToken"]
+  }
+}
+```
+
+### strava-oauth
+
+```json
+{
+  "name": "strava-oauth",
+  "description": "Extract Strava athlete stats via ZK-TLS proof",
+  "inputSchema": {
+    "type": "object",
+    "properties": {
+      "metric": {
+        "type": "string",
+        "enum": ["distance", "moving_time", "total_elevation_gain"]
+      },
+      "accessToken": { "type": "string" }
+    },
+    "required": ["metric", "accessToken"]
+  }
+}
+```
+
+### Custom Provider Template
+
+```json
+{
+  "name": "custom-provider",
+  "description": "Template for any OAuth-based API data source",
+  "inputSchema": {
+    "type": "object",
+    "properties": {
+      "provider": { "type": "string" },
+      "metric": { "type": "string" },
+      "accessToken": { "type": "string" },
+      "parameters": { "type": "object" }
+    },
+    "required": ["provider", "metric", "accessToken"]
+  }
+}
+```
+
+---
+
+## Message Templates
+
+### Seller Receives New Task
 
 ```
-⏳ Fitbit'e bağlanıyor...
-Lütfen bekleyin.
+📊 Yeni veri gorevi!
+
+Kaynak: Fitbit (adim verisi)
+Sure: 90 gun
+Odul: 1.50 USDC
+Satir sayisi: ~90
+
+Kabul etmek icin "evet", reddetmek icin "hayir" yaz.
 ```
 
-### Proof Generated
+### Seller Batch Delivered
 
 ```
-🔐 Kanıt oluşturuldu!
-Gönderiliyor...
-
-ID: 9f8e7d6c...
+📦 Batch 3/9 teslim edildi.
+Satir: 21-30 / 90
+Kanit: pf:9f8e7d6c...
+Odeme bekleniyor...
 ```
 
-### Success
+### Seller Payment Received
 
 ```
-✨ Tamamlandı!
-Ödeme Stellar ağında işledi.
+✅ Batch 3 odemesi alindi: 0.167 USDC
+Sonraki batch hazirlaniyor...
+```
+
+### Buyer Batch Verified
+
+```
+✅ Batch 3/9 dogrulandi + odendi (0.167 USDC)
+Kalan: 6 batch
+```
+
+### Transfer Complete
+
+```
+🎉 Tamamlandi!
+90 satir veri alindi ve dogrulandi.
+Toplam odeme: 1.50 USDC
+Escrow serbest birakildi.
 TX: 3e6c7d8a...
-
-Kazancınız hesabınıza aktarıldı.
 ```
 
 ### Error
 
 ```
-❌ Hata oluştu: {reason}
-Lütfen tekrar deneyin veya yardım isteyin.
+❌ Hata: {reason}
+Lutfen tekrar deneyin veya yardim isteyin.
 ```
 
 ---
 
-## Error Handling & Retries
+## Error Handling & Safety
 
 ### Common Errors
 
 | Error | Cause | Recovery |
-|---|---|---|
-| `X402 payment failed` | Insufficient balance or invalid signature | Check Stellar account balance, retry with new signature |
-| `ZK proof invalid` | Reclaim attestation verification failed | Regenerate proof, check API was called with correct params |
-| `Skill not found` | skillId doesn't exist on platform | Confirm skillId from notification message |
-| `Consent not found` | Stellar TX hasn't been indexed yet | Wait 2-5 seconds, retry |
-| `Metric not available` | API doesn't return requested metric | Check API credentials, confirm metric is available |
+|-------|-------|----------|
+| ZK proof invalid | Attestor signature mismatch | Regenerate proof, check attestor is running |
+| Escrow not found | SkillId doesn't have locked escrow | Wait for buyer to lock escrow |
+| Batch payment timeout | Buyer didn't pay within window | Pause delivery, wait or dispute |
+| IPFS upload failed | Pinata rate limit or network | Retry with exponential backoff |
+| Attestor unreachable | attestor-core is down | Check port 8001, restart if needed |
 
 ### Retry Logic
 
 ```typescript
-const retryWithBackoff = async (fn, maxRetries = 3) => {
+async function retryWithBackoff<T>(fn: () => Promise<T>, maxRetries = 3): Promise<T> {
   for (let i = 0; i < maxRetries; i++) {
     try {
       return await fn();
     } catch (err) {
-      const delay = Math.pow(2, i) * 1000; // 1s, 2s, 4s
       if (i < maxRetries - 1) {
-        await new Promise(r => setTimeout(r, delay));
+        await sleep(Math.pow(2, i) * 1000); // 1s, 2s, 4s
       } else {
         throw err;
       }
     }
   }
-};
-
-// Usage
-const proof = await retryWithBackoff(() => createFitbitProof(token, metric));
-```
-
----
-
-## Privacy & Security
-
-### Key Principles
-
-1. **Ham veri hiçbir zaman platform'a ulaşmaz** — Reclaim zkFetch encrypts API responses client-side
-2. **Pseudonym isolation** — Each user has a cryptographic pseudo_id (HMAC-SHA256) that cannot be reversed
-3. **Token management** — OAuth tokens stay on user's OpenClaw instance, never sent to platform
-4. **Proof-only submission** — Only ZK proofs (no raw data) cross the network
-5. **Stellar signatures** — All consent + proof decisions are cryptographically signed on Stellar
-
-### OpenClaw Security Checklist
-
-- [ ] Use HTTPS for all outbound requests
-- [ ] Store `OPENCLAW_TOKEN` securely (no plaintext logs)
-- [ ] Rotate `RECLAIM_APP_SECRET` regularly
-- [ ] Use environment variables for all secrets (.env, not checked in)
-- [ ] Enable Stellar transaction signing with keypair (not private key in memory)
-- [ ] Log only transaction hashes, never raw proof data
-- [ ] Validate all incoming `/hooks/agent` requests (verify Authorization header)
-- [ ] Monitor Horizon SSE stream for unexpected transactions
-
----
-
-## Debugging & Monitoring
-
-### Enable Verbose Logging
-
-```typescript
-process.env.DEBUG = 'openclaw:*,dataeconomy:*';
-
-// In your agent:
-if (process.env.DEBUG) {
-  console.log('[openclaw] Processing skill:', skillId);
-  console.log('[openclaw] Generated proof hash:', proof.identifier);
+  throw new Error('unreachable');
 }
 ```
 
-### Monitor Stellar Transactions
+---
 
+## Security Checklist
+
+### Both Agents
+- [ ] Store Stellar secret key securely (env var, not in code)
+- [ ] Use HTTPS for all outbound requests
+- [ ] Validate all Stellar TX signatures before trusting
+- [ ] Verify ed25519 attestor signatures on every proof
+- [ ] Never log raw data or decrypted payloads
+
+### Seller Agent
+- [ ] OAuth tokens stay local — never sent to platform or buyer
+- [ ] Encrypt all data rows with buyer's deliveryPublicKey
+- [ ] Verify escrow is locked before starting delivery
+- [ ] Wait for x402 payment confirmation before next batch
+
+### Buyer Agent
+- [ ] Keep delivery private key secure — only way to decrypt data
+- [ ] Verify proofs BEFORE sending x402 payment
+- [ ] Verify attestor public key is in trusted list
+- [ ] Check proof timestamps for freshness
+
+### Server (if running)
+- [ ] Never log or store plaintext data payloads
+- [ ] Never store buyer's delivery private key
+- [ ] Dispute resolution requires on-chain evidence
+- [ ] Admin keys rotate regularly
+
+---
+
+## Debugging
+
+### Check Seller Agent
 ```bash
-# Check all transactions for platform account
-curl https://horizon-testnet.stellar.org/accounts/GXXXXXX/transactions?order=desc&limit=10
+# Verify attestor is running
+curl http://localhost:8001/health
 
-# Find specific consent TX
-curl 'https://horizon-testnet.stellar.org/accounts/GXXXXXX/transactions?memo=CONSENT*'
+# Check Stellar account data
+curl "https://horizon-testnet.stellar.org/accounts/G.../data/pr:${ADDRESS}"
+
+# Monitor SSE stream
+curl "https://horizon-testnet.stellar.org/accounts/G.../data?cursor=now" -H "Accept: text/event-stream"
 ```
 
-### Test Proof Verification Locally
+### Check Buyer Agent
+```bash
+# Check escrow status
+curl "https://horizon-testnet.stellar.org/accounts/CONTRACT_ADDRESS"
 
-```typescript
-import { verifyDataProof } from '@dataeconomy/reclaim';
-
-const testProof = { /* ... */ };
-const isValid = await verifyDataProof(testProof);
-console.log('Proof valid:', isValid);
+# Verify a proof locally
+node -e "
+const { ed25519 } = require('@noble/curves/ed25519');
+const { sha256 } = require('@noble/hashes/sha256');
+// paste proof data and verify
+"
 ```
-
-### Health Check
-
-Implement a `/health` endpoint in OpenClaw:
-
-```typescript
-app.get('/health', async (c) => {
-  const horizonHealthy = await checkHorizonConnection();
-  const reclaimHealthy = process.env.RECLAIM_APP_ID ? true : false;
-
-  return c.json({
-    status: horizonHealthy && reclaimHealthy ? 'healthy' : 'degraded',
-    horizon: horizonHealthy,
-    reclaim: reclaimHealthy,
-    timestamp: new Date().toISOString(),
-  });
-});
-```
-
----
-
-## FAQ
-
-**Q: What if the user takes days to respond?**
-A: Tasks expire after the duration specified (e.g., 90 days). Platform marks tasks as "expired" and refunds escrow minus dispute fee.
-
-**Q: Can I run multiple OpenClaw instances for redundancy?**
-A: Yes, but use a shared Stellar account (private key stored securely). Each instance can subscribe to the same SSE stream without conflicts.
-
-**Q: What if Fitbit/Strava changes their API?**
-A: Update the MCP tool definition in your openclaw/tools/ directory. Platform-side, provider configuration is on the IPFS skill document.
-
-**Q: How do I know if my proof was accepted?**
-A: Check the response status from `/api/proofs/submit`. If `status: "verified"`, escrow is released. You'll also receive a message back in your OpenClaw session.
-
-**Q: What if the Stellar TX fails?**
-A: Platform logs retry the escrow release on next block. If repeated failures, contact support — may be an issue with the Soroban contract.
-
-**Q: Can I customize the MCP tools for my use case?**
-A: Yes! Create a custom-provider tool following the template. Ensure the API endpoint returns data that can be ZK-TLS proven (TLS session recorded).
-
----
-
-## Support & Resources
-
-- **OpenClaw Repo**: https://github.com/nicholasgriffintn/openclaw
-- **Reclaim Protocol**: https://github.com/reclaimprotocol
-- **Stellar Docs**: https://developers.stellar.org/docs
-- **X402 on Stellar**: https://developers.stellar.org/docs/build/apps/x402
-- **dataEconomy GitHub**: (your repo link)
-- **Testnet Faucet**: https://laboratory.stellar.org
 
 ---
 
 ## Version History
 
-- **v2.0** (2026-03-09) — Added self-hosted attestor-core setup, ZK-TLS architecture, ed25519 keypair generation, attestor health check.
-- **v1.0** (2026-03-01) — Initial OpenClaw integration guide. Covers consent flow, MCP tools, proof generation, X402 payment, Horizon SSE listener.
-
----
-
-## Production Runbook (OpenClaw + Chain + IPFS + X402)
-
-### Canonical data plane
-1. Buyer/MCP creator publishes JSON directly to **IPFS (Pinata HTTPS API)** from frontend.
-2. Frontend writes CID index to **Stellar** with Freighter signature (manage_data / contract call).
-3. Frontend sends backend awareness notification (`/api/notify/*`) with `{txHash, ipfsHash}` only.
-
-### Seller/OpenClaw control plane
-1. OpenClaw listens to Stellar (Horizon/Soroban RPC) for consent + escrow events.
-2. OpenClaw resolves skill/policy/MCP CIDs from on-chain index keys.
-3. OpenClaw downloads CID payloads from IPFS gateway and validates policy constraints.
-4. OpenClaw runs data extraction tool (MVP: API + zkTLS/Reclaim path), encrypts payload.
-5. OpenClaw submits proof+encrypted delivery to facilitator `/api/proofs/submit` with `X-PAYMENT`.
-
-### X402 enforcement (mandatory in prod)
-- `/api/proofs/submit` is payment-gated with x402 middleware.
-- Missing/invalid `X-PAYMENT` => HTTP 402 with payment requirements.
-- Successful proof pipeline triggers facilitator `/settle` call.
-
-### Escrow + MCP creator payout
-- Escrow release is executed via Soroban contract calls.
-- For marketplace-backed skills, release uses MCP-aware split function so creator fee is distributed in-contract (not manual backend transfer logic).
-- Dispute/refund lifecycle remains contract-driven.
-
-### Delivery security
-- Buyer callback must be HTTPS in production.
-- Facilitator relays encrypted payload; plaintext raw dataset should not persist on facilitator.
-
-
-
-### Buyer-Seller encrypted delivery key model (Production)
-- Buyer creates a delivery keypair locally (X25519 / age / NaCl).
-- Buyer publishes **deliveryPublicKey** inside skill metadata (IPFS + on-chain index).
-- OpenClaw fetches skill metadata, encrypts payload with deliveryPublicKey.
-- Facilitator only relays encryptedPayload + checksum + proofHash to buyer callback.
-- Buyer callback decrypts using buyer private key and validates integrity (`sha256(encryptedPayload)` vs checksum + proofHash binding).
-- HTTPS proxy can terminate TLS but **must not** perform payload decryption.
-- Facilitator must never persist plaintext payload.
+- **v3.0** (2026-04-13) — Complete rewrite for agent-to-agent model. Row-by-row transfer, seller policy, buyer verification, server-optional architecture.
+- **v2.0** (2026-03-09) — Added self-hosted attestor-core, ZK-TLS architecture.
+- **v1.0** (2026-03-01) — Initial OpenClaw integration guide.
