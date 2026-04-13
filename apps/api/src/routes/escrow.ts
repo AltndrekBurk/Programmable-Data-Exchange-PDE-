@@ -1,8 +1,8 @@
 import { Hono } from 'hono'
 import { z } from 'zod'
 import { zValidator } from '@hono/zod-validator'
-import { generatePseudonym } from '@dataeconomy/pseudonym'
-import type { EscrowAdapter } from '@dataeconomy/storage'
+import { generatePseudonym } from '@pde/pseudonym'
+import type { EscrowAdapter } from '@pde/storage'
 
 export function createEscrowRouter(escrow: EscrowAdapter) {
   const router = new Hono()

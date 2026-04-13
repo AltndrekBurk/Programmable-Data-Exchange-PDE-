@@ -1,5 +1,5 @@
 // ---------------------------------------------------------------------------
-// @dataeconomy/ipfs — Pinata-backed IPFS utilities
+// @pde/ipfs — Pinata-backed IPFS utilities
 //
 // Environment variables required:
 //   PINATA_JWT          — Pinata JWT API key (v2 API)

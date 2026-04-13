@@ -1,5 +1,5 @@
 {
-  "name": "@dataeconomy/storage",
+  "name": "@pde/storage",
   "version": "0.1.0",
   "private": true,
   "type": "module",
@@ -15,9 +15,9 @@
     }
   },
   "dependencies": {
-    "@dataeconomy/ipfs": "*",
-    "@dataeconomy/stellar": "*",
-    "@dataeconomy/pseudonym": "*",
+    "@pde/ipfs": "*",
+    "@pde/stellar": "*",
+    "@pde/pseudonym": "*",
     "@stellar/stellar-sdk": "^13.0.0"
   }
 }

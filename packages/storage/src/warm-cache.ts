@@ -42,7 +42,7 @@ export class WarmCache {
    * Reads all data entries from the platform account and parses keys.
    */
   async rebuild(platformAddress: string): Promise<number> {
-    const { readAccountData } = await import('@dataeconomy/stellar')
+    const { readAccountData } = await import('@pde/stellar')
 
     try {
       const dataMap = await readAccountData(platformAddress)

@@ -1,5 +1,5 @@
 // ---------------------------------------------------------------------------
-// @dataeconomy/pseudonym
+// @pde/pseudonym
 //
 // Utilities for generating and verifying deterministic pseudonyms for
 // data providers. A pseudonym lets the platform correlate contributions

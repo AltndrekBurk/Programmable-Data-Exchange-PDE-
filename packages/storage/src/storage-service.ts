@@ -184,7 +184,7 @@ export class StorageService {
   // =========================================================================
 
   async storeRaw(data: unknown): Promise<{ ipfsHash: string }> {
-    const { uploadJson } = await import('@dataeconomy/ipfs')
+    const { uploadJson } = await import('@pde/ipfs')
     const ipfsHash = await uploadJson(data, {
       name: `raw-${Date.now()}.json`,
       keyvalues: { type: 'raw' },
@@ -201,8 +201,8 @@ export class StorageService {
     id: string,
     data: T
   ): Promise<{ ipfsHash: string; stellarTx?: string }> {
-    const { uploadJson } = await import('@dataeconomy/ipfs')
-    const { writeIndexEntry } = await import('@dataeconomy/stellar')
+    const { uploadJson } = await import('@pde/ipfs')
+    const { writeIndexEntry } = await import('@pde/stellar')
 
     // Step 1: Upload to IPFS (zorunlu, fallback yok)
     const ipfsHash = await uploadJson(data, {
@@ -235,7 +235,7 @@ export class StorageService {
 
     // Otherwise fetch from IPFS
     try {
-      const { fetchJson } = await import('@dataeconomy/ipfs')
+      const { fetchJson } = await import('@pde/ipfs')
       const data = await fetchJson<T>(entry.ipfsHash)
       // Update cache with fetched data
       this.cache.set(type, id, entry.ipfsHash, data)
@@ -255,7 +255,7 @@ export class StorageService {
         results.push(entry.data as T)
       } else {
         try {
-          const { fetchJson } = await import('@dataeconomy/ipfs')
+          const { fetchJson } = await import('@pde/ipfs')
           const data = await fetchJson<T>(entry.ipfsHash)
           this.cache.set(type, entry.id, entry.ipfsHash, data)
           results.push(data)

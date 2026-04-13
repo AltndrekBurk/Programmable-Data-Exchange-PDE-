@@ -9,7 +9,7 @@ export default function AuthLayout({ children }: AuthLayoutProps) {
     <div className="min-h-screen flex flex-col justify-center px-4 py-12">
       <div className="sm:mx-auto sm:w-full sm:max-w-md">
         <div className="text-center mb-8">
-          <h1 className="text-3xl font-bold text-slate-100">dataEconomy</h1>
+          <h1 className="text-3xl font-bold text-slate-100">PDE</h1>
           <p className="mt-2 text-sm text-slate-400">
             Buy Data and Sell Data on Stellar
           </p>

@@ -2,7 +2,7 @@ import { Hono } from 'hono'
 import { z } from 'zod'
 import { zValidator } from '@hono/zod-validator'
 import { Keypair } from '@stellar/stellar-sdk'
-import { generatePseudonym } from '@dataeconomy/pseudonym'
+import { generatePseudonym } from '@pde/pseudonym'
 import crypto from 'crypto'
 
 export const authRouter = new Hono()
@@ -56,7 +56,7 @@ authRouter.get('/challenge', (c) => {
     return c.json({ error: 'Too many requests. Try again later.' }, 429)
   }
 
-  const challenge = `dataEconomy-auth:${address}:${Date.now()}:${crypto.randomBytes(16).toString('hex')}`
+  const challenge = `pde-auth:${address}:${Date.now()}:${crypto.randomBytes(16).toString('hex')}`
   challenges.set(address, {
     challenge,
     expiresAt: Date.now() + 5 * 60 * 1000, // 5 minutes

@@ -1,5 +1,5 @@
 {
-  "name": "@dataeconomy/ipfs",
+  "name": "@pde/ipfs",
   "version": "0.1.0",
   "private": true,
   "type": "module",

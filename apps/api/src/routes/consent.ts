@@ -1,8 +1,8 @@
 import { Hono } from 'hono'
 import { z } from 'zod'
 import { zValidator } from '@hono/zod-validator'
-import { generatePseudonym } from '@dataeconomy/pseudonym'
-import { horizonServer } from '@dataeconomy/stellar'
+import { generatePseudonym } from '@pde/pseudonym'
+import { horizonServer } from '@pde/stellar'
 
 export const consentRouter = new Hono()
 const isProd = process.env.NODE_ENV === 'production'
@@ -36,7 +36,7 @@ consentRouter.post('/notify', zValidator('json', notifyUserSchema), async (c) =>
       },
       body: JSON.stringify({
         message,
-        name: 'DataEconomy-Notify',
+        name: 'PDE-Notify',
         agentId: 'main',
         sessionKey: `skill:${body.skillId}:${pseudoId}`,
         wakeMode: 'now',

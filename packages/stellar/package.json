@@ -1,5 +1,5 @@
 {
-  "name": "@dataeconomy/stellar",
+  "name": "@pde/stellar",
   "version": "0.1.0",
   "private": true,
   "type": "module",

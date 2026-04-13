@@ -1,7 +1,7 @@
 import { Hono } from 'hono'
-import { readAccountData } from '@dataeconomy/stellar'
-import { generatePseudonym } from '@dataeconomy/pseudonym'
-import type { StorageService } from '@dataeconomy/storage'
+import { readAccountData } from '@pde/stellar'
+import { generatePseudonym } from '@pde/pseudonym'
+import type { StorageService } from '@pde/storage'
 
 /**
  * Dashboard API — reads DIRECTLY from Stellar on-chain data

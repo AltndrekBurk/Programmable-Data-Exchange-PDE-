@@ -1,9 +1,9 @@
 import { Hono } from 'hono'
 import { z } from 'zod'
 import { zValidator } from '@hono/zod-validator'
-import { verifyDataProof } from '@dataeconomy/reclaim'
+import { verifyDataProof } from '@pde/reclaim'
 import crypto from 'node:crypto'
-import type { StorageService, EscrowAdapter } from '@dataeconomy/storage'
+import type { StorageService, EscrowAdapter } from '@pde/storage'
 import { createX402Middleware, settlePayment } from '../lib/x402.js'
 import { notifyProofAccepted } from '../lib/openclaw.js'
 
@@ -193,10 +193,10 @@ export function createProofsRouter(storage: StorageService, escrow: EscrowAdapte
           method: 'POST',
           headers: {
             'Content-Type': 'application/json',
-            'X-DataEconomy-Proof-Hash': proofHash,
-            'X-DataEconomy-Skill-Id': body.skillId,
-            'X-DataEconomy-Delivery': 'x402-verified',
-            'X-DataEconomy-Delivery-Key': skill.deliveryPublicKey || 'unset',
+            'X-PDE-Proof-Hash': proofHash,
+            'X-PDE-Skill-Id': body.skillId,
+            'X-PDE-Delivery': 'x402-verified',
+            'X-PDE-Delivery-Key': skill.deliveryPublicKey || 'unset',
           },
           body: JSON.stringify(deliveryBody),
           signal: AbortSignal.timeout(deliveryTimeoutMs),

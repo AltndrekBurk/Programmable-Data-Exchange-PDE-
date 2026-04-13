@@ -182,7 +182,7 @@ seedRouter.post('/', async (c) => {
         stellarAddress: 'GBF32DUEXEYEUFEYODWRZQJW4O5ZB2TZ7JA44R4OIMMPWCTRWB42LG6K',
         dataSources: ['fitbit', 'strava', 'github'],
         channel: 'telegram',
-        contactInfo: '@dataeconomy_test',
+        contactInfo: '@pde_test',
       }),
     })
     results.provider = await provRes.json()

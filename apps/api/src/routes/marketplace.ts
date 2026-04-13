@@ -1,12 +1,12 @@
-import { writeIndexEntry, readAccountData } from '@dataeconomy/stellar'
-import { uploadJson } from '@dataeconomy/ipfs'
+import { writeIndexEntry, readAccountData } from '@pde/stellar'
+import { uploadJson } from '@pde/ipfs'
 import { Keypair } from '@stellar/stellar-sdk'
 import { Hono } from "hono";
 import { zValidator } from "@hono/zod-validator";
 import { z } from "zod";
 import { v4 as uuidv4 } from "uuid";
-import { generatePseudonym } from "@dataeconomy/pseudonym";
-import type { StorageService, StoredMcpStandard } from "@dataeconomy/storage";
+import { generatePseudonym } from "@pde/pseudonym";
+import type { StorageService, StoredMcpStandard } from "@pde/storage";
 
 function parseOnChainUsdcVolume(raw: string): number | null {
   const value = Number.parseFloat(raw)

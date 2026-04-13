@@ -28,7 +28,7 @@ export async function notifyViaOpenClaw(params: DispatchParams): Promise<boolean
       },
       body: JSON.stringify({
         message: params.message,
-        name: 'DataEconomy',
+        name: 'PDE',
         agentId: 'main',
         sessionKey: params.sessionKey,
         wakeMode: 'now',
@@ -56,7 +56,7 @@ export async function notifyViaOpenClaw(params: DispatchParams): Promise<boolean
  * Providers that have a bot config (openclawUrl + token) will receive a notification.
  */
 export async function dispatchSkillToProviders(
-  storage: import('@dataeconomy/storage').StorageService,
+  storage: import('@pde/storage').StorageService,
   skillId: string,
   dataSource: string,
   rewardPerUser: number,
@@ -114,7 +114,7 @@ export async function dispatchSkillToProviders(
  * Notify a provider that their proof was accepted and escrow released.
  */
 export async function notifyProofAccepted(
-  storage: import('@dataeconomy/storage').StorageService,
+  storage: import('@pde/storage').StorageService,
   pseudoId: string,
   skillId: string,
   proofHash: string,

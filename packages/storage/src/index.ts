@@ -1,5 +1,5 @@
 // ---------------------------------------------------------------------------
-// @dataeconomy/storage — Unified IPFS + Stellar storage layer
+// @pde/storage — Unified IPFS + Stellar storage layer
 //
 // STORAGE_MODE env var controls behavior:
 //   "ipfs+stellar" — real IPFS uploads + Stellar manage_data index

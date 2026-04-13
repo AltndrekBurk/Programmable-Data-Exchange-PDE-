@@ -1,5 +1,5 @@
 {
-  "name": "@dataeconomy/api",
+  "name": "@pde/api",
   "version": "0.1.0",
   "private": true,
   "type": "module",
@@ -9,11 +9,11 @@
     "start": "node dist/index.js"
   },
   "dependencies": {
-    "@dataeconomy/ipfs": "*",
-    "@dataeconomy/pseudonym": "*",
-    "@dataeconomy/reclaim": "*",
-    "@dataeconomy/stellar": "*",
-    "@dataeconomy/storage": "*",
+    "@pde/ipfs": "*",
+    "@pde/pseudonym": "*",
+    "@pde/reclaim": "*",
+    "@pde/stellar": "*",
+    "@pde/storage": "*",
     "@hono/node-server": "^1.19.11",
     "@hono/zod-validator": "^0.4.0",
     "@openzeppelin/relayer-sdk": "^0.1.0",

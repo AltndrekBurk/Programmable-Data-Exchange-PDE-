@@ -1,5 +1,5 @@
 {
-  "name": "dataeconomy",
+  "name": "pde",
   "private": true,
   "workspaces": [
     "apps/*",

@@ -87,7 +87,7 @@ export default function LoginPage() {
     <div className="flex flex-col items-center gap-6">
       <div className="text-center">
         <h2 className="text-2xl font-bold text-slate-100">
-          Sign in to dataEconomy
+          Sign in to PDE
         </h2>
         <p className="mt-2 text-sm text-slate-400">
           Secure, anonymous authentication via your Stellar wallet

@@ -1,9 +1,9 @@
 import { Hono } from 'hono'
 import { z } from 'zod'
 import { zValidator } from '@hono/zod-validator'
-import { generatePseudonym } from '@dataeconomy/pseudonym'
-import type { StorageService } from '@dataeconomy/storage'
-import { uploadJson } from '@dataeconomy/ipfs'
+import { generatePseudonym } from '@pde/pseudonym'
+import type { StorageService } from '@pde/storage'
+import { uploadJson } from '@pde/ipfs'
 
 export function createProviderRouter(storage: StorageService) {
   const router = new Hono()

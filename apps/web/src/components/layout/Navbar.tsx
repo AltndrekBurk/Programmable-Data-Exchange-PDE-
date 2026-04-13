@@ -22,7 +22,7 @@ export default function Navbar() {
           <div className="flex items-center gap-8">
             <Link href="/" className="flex items-center gap-2">
               <span className="text-xl font-bold tracking-tight text-slate-100">
-                dataEconomy
+                PDE
               </span>
               <span className="hidden rounded-full border border-emerald-400/40 bg-emerald-500/10 px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-emerald-300 md:inline">
                 Data Exchange

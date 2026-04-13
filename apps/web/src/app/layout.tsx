@@ -16,7 +16,7 @@ const geistMono = Geist_Mono({
 });
 
 export const metadata: Metadata = {
-  title: "dataEconomy — Privacy-Preserving Data Marketplace",
+  title: "PDE — Programmable Data Exchange",
   description:
     "ZK proof ile kanitlanmis veri ekonomisi. Ham veri kimseye gorunmez, sadece kriptografik kanit akar.",
 };
