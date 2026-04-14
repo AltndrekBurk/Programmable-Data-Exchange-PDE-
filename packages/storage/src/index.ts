@@ -20,5 +20,7 @@ export type {
   StoredProvider,
   StoredBotConfig,
   EscrowRecord,
+  StoredBatchState,
+  StoredBatchPayment,
   EntityType,
 } from './types.js'
