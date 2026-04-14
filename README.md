@@ -391,6 +391,27 @@ ATTESTOR_URL=http://localhost:8001
 
 ---
 
+## Agent-to-Agent API Surface (Row-by-Row + x402)
+
+For direct bot-to-bot integration (without depending on web UI state), use these API endpoints:
+
+| Endpoint | Purpose | x402 |
+|---|---|---|
+| `POST /api/proofs/submit` | Verify ZK proof, optionally register batch delivery (`batch` payload). | Required |
+| `POST /api/proofs/batch/pay` | Buyer records micro-payment confirmation for a batch (`batchIndex`, `txHash`). | Required |
+| `GET /api/proofs/batches/:escrowId` | Inspect delivered batches + confirmed payments to decide final release readiness. | Not required |
+
+### Release Gate in Batch Mode
+
+When `batch` is included in proof submission:
+1. Proof is verified and indexed.
+2. Batch CID metadata is indexed (`batch` entity).
+3. Escrow release is deferred until **all batches are delivered AND all batch payments are confirmed**.
+
+This keeps row-by-row delivery aligned with x402 economics in agent-to-agent mode.
+
+---
+
 ## ZK-TLS Architecture
 
 ```

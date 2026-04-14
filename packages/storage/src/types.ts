@@ -10,26 +10,20 @@ export type UserRole = 'buyer' | 'seller'
 // Batch Transfer Protocol
 // ---------------------------------------------------------------------------
 
-export interface BatchRow {
-  /** NaCl box encrypted data (base64 of nonce + ciphertext) */
-  encrypted: string
-  /** Reclaim ZK-TLS proof for this row */
-  proof: Record<string, unknown>
-}
-
-export interface BatchDelivery {
+export interface BatchState {
   batchIndex: number
   totalBatches: number
   escrowId: string
   skillId: string
   sellerAddress: string
-  rows: BatchRow[]
+  /** Number of rows delivered in this batch (without storing row payload on server) */
+  rowCount: number
+  /** Proof hash that authenticated this batch */
+  proofHash: string
   /** sha256 of all row proof identifiers joined by ':' */
   batchHash: string
   /** ed25519 signature of batchHash by seller */
   sellerSignature?: string
-  /** IPFS CID of this batch (set after upload) */
-  batchCid?: string
   createdAt: string
 }
 
@@ -42,6 +36,14 @@ export interface BatchPayment {
   txHash: string
   memo: string
   createdAt: string
+}
+
+export interface StoredBatchState extends BatchState {
+  status: 'delivered' | 'verified' | 'rejected'
+}
+
+export interface StoredBatchPayment extends BatchPayment {
+  status: 'pending' | 'confirmed'
 }
 
 // ---------------------------------------------------------------------------

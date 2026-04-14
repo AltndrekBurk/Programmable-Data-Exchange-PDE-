@@ -19,6 +19,8 @@ import type {
   StoredProvider,
   StoredBotConfig,
   EscrowRecord,
+  StoredBatchState,
+  StoredBatchPayment,
   EntityType,
 } from './types.js'
 
@@ -100,6 +102,40 @@ export class StorageService {
   async listProofsBySkill(skillId: string): Promise<StoredProof[]> {
     const all = await this.listProofs()
     return all.filter((p) => p.skillId === skillId)
+  }
+
+  // =========================================================================
+  // BATCH DELIVERIES + BATCH PAYMENTS
+  // =========================================================================
+
+  async storeBatchState(delivery: StoredBatchState): Promise<{ ipfsHash: string; stellarTx?: string }> {
+    return this.storeToIpfsAndStellar(
+      'batch',
+      `${delivery.escrowId}:${delivery.batchIndex}`,
+      delivery
+    )
+  }
+
+  async listBatchStatesByEscrow(escrowId: string): Promise<StoredBatchState[]> {
+    const all = await this.listFromCache<StoredBatchState>('batch')
+    return all
+      .filter((b) => b.escrowId === escrowId)
+      .sort((a, b) => a.batchIndex - b.batchIndex)
+  }
+
+  async storeBatchPayment(payment: StoredBatchPayment): Promise<{ ipfsHash: string; stellarTx?: string }> {
+    return this.storeToIpfsAndStellar(
+      'batchpay',
+      `${payment.escrowId}:${payment.batchIndex}:${payment.txHash.slice(0, 12)}`,
+      payment
+    )
+  }
+
+  async listBatchPaymentsByEscrow(escrowId: string): Promise<StoredBatchPayment[]> {
+    const all = await this.listFromCache<StoredBatchPayment>('batchpay')
+    return all
+      .filter((p) => p.escrowId === escrowId)
+      .sort((a, b) => a.batchIndex - b.batchIndex)
   }
 
   // =========================================================================
