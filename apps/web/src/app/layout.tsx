@@ -1,13 +1,8 @@
 import type { Metadata } from "next";
-import { GeistSans } from "geist/font/sans";
-import { GeistMono } from "geist/font/mono";
 import "./globals.css";
 import SessionProvider from "@/components/providers/SessionProvider";
 import Navbar from "@/components/layout/Navbar";
 import { ToastProvider } from "@/components/ui/Toast";
-
-const geistSans = GeistSans;
-const geistMono = GeistMono;
 
 export const metadata: Metadata = {
   title: "PDE — Programmable Data Exchange",
@@ -22,7 +17,7 @@ export default function RootLayout({
 }>) {
   return (
     <html lang="en">
-      <body className={`${geistSans.variable} ${geistMono.variable} antialiased`}>
+      <body className="antialiased">
         <SessionProvider>
           <ToastProvider>
             <Navbar />
