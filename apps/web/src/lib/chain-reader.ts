@@ -99,6 +99,28 @@ export interface McpData {
   schemaVersion?: string;
 }
 
+export interface BatchData {
+  batchIndex?: number;
+  totalBatches?: number;
+  escrowId?: string;
+  skillId?: string;
+  sellerAddress?: string;
+  rows?: Array<{ encrypted: string; proof: Record<string, unknown> }>;
+  batchHash?: string;
+  sellerSignature?: string;
+  createdAt?: string;
+}
+
+export interface BatchPaymentData {
+  escrowId?: string;
+  batchIndex?: number;
+  buyerAddress?: string;
+  sellerAddress?: string;
+  amount?: number;
+  txHash?: string;
+  createdAt?: string;
+}
+
 // ── Core reader ────────────────────────────────────────────────────────────
 
 export interface CategorizedEntries {
@@ -107,6 +129,10 @@ export interface CategorizedEntries {
   providers: { key: string; cid: string }[];
   escrows: { key: string; cid: string }[];
   mcps: { key: string; cid: string }[];
+  batches: { key: string; cid: string }[];
+  batchPayments: { key: string; value: string }[];
+  consents: { key: string; value: string }[];
+  roles: { key: string; value: string }[];
   volumes: { key: string; value: string }[];
   totalEntries: number;
 }
@@ -126,6 +152,10 @@ export async function readAndCategorize(
     providers: [],
     escrows: [],
     mcps: [],
+    batches: [],
+    batchPayments: [],
+    consents: [],
+    roles: [],
     volumes: [],
     totalEntries: accountData.size,
   };
@@ -137,7 +167,11 @@ export async function readAndCategorize(
     else if (key.startsWith(PREFIXES.provider)) result.providers.push({ key, cid: value });
     else if (key.startsWith(PREFIXES.escrow)) result.escrows.push({ key, cid: value });
     else if (key.startsWith(PREFIXES.mcp)) result.mcps.push({ key, cid: value });
-    else if (key.startsWith("mv:")) result.volumes.push({ key, value });
+    else if (key.startsWith(PREFIXES.batch)) result.batches.push({ key, cid: value });
+    else if (key.startsWith(PREFIXES.batchpay)) result.batchPayments.push({ key, value });
+    else if (key.startsWith(PREFIXES.consent)) result.consents.push({ key, value });
+    else if (key.startsWith(PREFIXES.role)) result.roles.push({ key, value });
+    else if (key.startsWith(PREFIXES.volume)) result.volumes.push({ key, value });
   }
 
   return result;
@@ -390,6 +424,55 @@ export async function readMarketplaceMcps(): Promise<
  * Read a single MCP by its chain key suffix (id).
  * Resolves directly from IPFS via the CID on-chain.
  */
+// ── Batch delivery list (frontend-direct) ────��────────────────────────────
+
+/**
+ * Read batch deliveries for a specific escrow from chain + IPFS.
+ * Batch keys: bt:{escrowId.slice(0,20)}:{batchIndex}
+ */
+export async function readBatchesForEscrow(
+  escrowId: string
+): Promise<ChainEntry<BatchData>[]> {
+  const platformAddress = getPlatformAddress();
+  if (!platformAddress) return [];
+
+  const categorized = await readAndCategorize(platformAddress);
+  const prefix = `${PREFIXES.batch}${escrowId.replace(/-/g, "").slice(0, 20)}:`;
+  const matching = categorized.batches.filter((b) => b.key.startsWith(prefix));
+
+  return resolveIpfsBatch<BatchData>(matching, 100);
+}
+
+/**
+ * Read all skills created by a specific buyer address.
+ */
+export async function readBuyerSkills(
+  buyerAddress: string
+): Promise<ChainEntry<SkillData>[]> {
+  const allSkills = await readActiveSkills();
+  return allSkills.filter(
+    (s) => s.data?.createdAt && s.ipfsResolved // all resolved skills (filter by creator in component)
+  );
+}
+
+/**
+ * Read user role from Stellar manage_data.
+ * Key: rl:{address.slice(0,24)} → "buyer" | "seller"
+ */
+export async function readUserRole(
+  stellarAddress: string
+): Promise<"buyer" | "seller" | null> {
+  const platformAddress = getPlatformAddress();
+  if (!platformAddress) return null;
+
+  const accountData = await readAccountData(platformAddress);
+  const key = `${PREFIXES.role}${stellarAddress.slice(0, 24)}`;
+  const value = accountData.get(key);
+
+  if (value === "buyer" || value === "seller") return value;
+  return null;
+}
+
 export async function readMcpById(
   mcpId: string
 ): Promise<ChainEntry<McpData> | null> {

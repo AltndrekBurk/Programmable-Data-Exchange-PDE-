@@ -3,17 +3,40 @@
 import Link from "next/link";
 import { useSession, signOut } from "next-auth/react";
 import { usePathname } from "next/navigation";
+import { useRole } from "@/hooks/useRole";
 
-const navLinks = [
-  { href: "/dashboard", label: "Dashboard" },
+type NavLink = { href: string; label: string };
+
+const buyerLinks: NavLink[] = [
+  { href: "/buyer/dashboard", label: "Dashboard" },
+  { href: "/buyer/request", label: "Create Request" },
+  { href: "/buyer/requests", label: "My Requests" },
   { href: "/marketplace", label: "Marketplace" },
-  { href: "/buy", label: "Buy Data" },
-  { href: "/sell", label: "Sell Data" },
+];
+
+const sellerLinks: NavLink[] = [
+  { href: "/seller/dashboard", label: "Dashboard" },
+  { href: "/seller/policy", label: "My Policy" },
+  { href: "/seller/tasks", label: "Active Tasks" },
+  { href: "/seller/bot-setup", label: "Bot Setup" },
+];
+
+const defaultLinks: NavLink[] = [
+  { href: "/role", label: "Dashboard" },
+  { href: "/marketplace", label: "Marketplace" },
 ];
 
 export default function Navbar() {
   const { data: session, status } = useSession();
   const pathname = usePathname();
+  const { role } = useRole();
+
+  const navLinks =
+    role === "buyer"
+      ? buyerLinks
+      : role === "seller"
+        ? sellerLinks
+        : defaultLinks;
 
   return (
     <nav className="sticky top-0 z-40 border-b border-slate-800/90 bg-slate-950/85 backdrop-blur">
@@ -50,15 +73,31 @@ export default function Navbar() {
           <div className="flex items-center gap-4">
             {status === "authenticated" && session?.user ? (
               <>
-                <div className="hidden sm:flex flex-col items-end text-xs">
-                  <span className="text-slate-400 font-mono">
-                    {session.user.stellarAddress?.slice(0, 6)}...
-                    {session.user.stellarAddress?.slice(-4)}
-                  </span>
-                  <span className="text-slate-500">
-                    {session.user.stellarAddress?.slice(0, 8)}
-                  </span>
+                <div className="hidden sm:flex items-center gap-2">
+                  <div className="flex flex-col items-end text-xs">
+                    <span className="text-slate-400 font-mono">
+                      {session.user.stellarAddress?.slice(0, 6)}...
+                      {session.user.stellarAddress?.slice(-4)}
+                    </span>
+                  </div>
+                  {role && (
+                    <span
+                      className={`rounded-full px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wide ${
+                        role === "buyer"
+                          ? "border border-emerald-400/30 bg-emerald-500/10 text-emerald-300"
+                          : "border border-cyan-400/30 bg-cyan-500/10 text-cyan-300"
+                      }`}
+                    >
+                      {role}
+                    </span>
+                  )}
                 </div>
+                <Link
+                  href="/role"
+                  className="text-xs text-slate-500 hover:text-slate-300 transition-colors"
+                >
+                  Switch Role
+                </Link>
                 <button
                   onClick={() => signOut({ callbackUrl: "/login" })}
                   className="text-sm text-slate-400 hover:text-white transition-colors"

@@ -20,6 +20,11 @@ export const PREFIXES: Record<string, string> = {
   botconfig: "bc:",
   escrow: "es:",
   review: "rv:",
+  batch: "bt:",
+  batchpay: "bp:",
+  consent: "cs:",
+  role: "rl:",
+  volume: "mv:",
 };
 
 /**

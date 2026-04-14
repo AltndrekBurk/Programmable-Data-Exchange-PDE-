@@ -2,7 +2,75 @@
 // Shared types for storage layer
 // ---------------------------------------------------------------------------
 
-export type EntityType = 'skill' | 'mcp' | 'proof' | 'provider' | 'botconfig' | 'escrow' | 'review'
+export type EntityType = 'skill' | 'mcp' | 'proof' | 'provider' | 'botconfig' | 'escrow' | 'review' | 'batch' | 'batchpay'
+
+export type UserRole = 'buyer' | 'seller'
+
+// ---------------------------------------------------------------------------
+// Batch Transfer Protocol
+// ---------------------------------------------------------------------------
+
+export interface BatchRow {
+  /** NaCl box encrypted data (base64 of nonce + ciphertext) */
+  encrypted: string
+  /** Reclaim ZK-TLS proof for this row */
+  proof: Record<string, unknown>
+}
+
+export interface BatchDelivery {
+  batchIndex: number
+  totalBatches: number
+  escrowId: string
+  skillId: string
+  sellerAddress: string
+  rows: BatchRow[]
+  /** sha256 of all row proof identifiers joined by ':' */
+  batchHash: string
+  /** ed25519 signature of batchHash by seller */
+  sellerSignature?: string
+  /** IPFS CID of this batch (set after upload) */
+  batchCid?: string
+  createdAt: string
+}
+
+export interface BatchPayment {
+  escrowId: string
+  batchIndex: number
+  buyerAddress: string
+  sellerAddress: string
+  amount: number
+  txHash: string
+  memo: string
+  createdAt: string
+}
+
+// ---------------------------------------------------------------------------
+// Seller Policy (agent-to-agent)
+// ---------------------------------------------------------------------------
+
+export interface SellerPolicy {
+  stellarAddress: string
+  dataSources: string[]
+  allowedMetrics: string[]
+  deniedMetrics: string[]
+  minPrice: number
+  pricePerRow?: number
+  maxRowsPerRequest: number
+  maxConcurrentTasks: number
+  autoAccept: boolean
+  autoAcceptRules?: {
+    maxPrice: number
+    onlyMetrics: string[]
+    onlyBuyers?: string[]
+  }
+  contactChannel: 'whatsapp' | 'telegram' | 'discord'
+  contactId: string
+  attestorUrl?: string
+  publicKeyForEncryption?: string
+  createdAt: string
+  updatedAt: string
+  policyVersion: number
+}
 
 export interface SkillPolicy {
   maxProofAgeHours: number

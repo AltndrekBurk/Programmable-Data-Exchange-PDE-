@@ -22,6 +22,8 @@ const PREFIXES: Record<EntityType, string> = {
   botconfig: 'bc:',
   escrow: 'es:',
   review: 'rv:',
+  batch: 'bt:',
+  batchpay: 'bp:',
 }
 
 export class WarmCache {
