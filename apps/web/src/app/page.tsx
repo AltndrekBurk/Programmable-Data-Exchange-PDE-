@@ -1,7 +1,7 @@
 'use client';
 
 import { Scene3D } from "@/components/landing/Scene3D";
-import { Activity, ShieldCheck, ArrowRight, Layers, Lock, Cpu } from "lucide-react";
+import { Activity, ShieldCheck, ArrowRight, Layers, Lock, Cpu, Bot } from "lucide-react";
 import type { LucideIcon } from "lucide-react";
 import type { ReactNode } from "react";
 import Link from "next/link";
@@ -75,15 +75,17 @@ export default function Home() {
                 </p>
              </motion.div>
 
-             <motion.div 
+             <motion.div
                initial={{ opacity: 0, y: 20 }}
                animate={{ opacity: 1, y: 0 }}
                transition={{ duration: 0.8, delay: 0.2 }}
                className="flex flex-col sm:flex-row gap-4 w-full justify-center"
              >
-                <Link href="/buy" className="group relative px-8 py-4 bg-emerald-500 hover:bg-emerald-400 text-black font-bold text-sm tracking-wide uppercase transition-all">
+                {/* Primary CTA — Agent Console */}
+                <Link href="/agent" className="group relative px-8 py-4 bg-emerald-500 hover:bg-emerald-400 text-black font-bold text-sm tracking-wide uppercase transition-all">
                    <span className="flex items-center gap-2">
-                      Buy Data
+                      <Bot size={16} />
+                      Open Agent Console
                       <ArrowRight size={16} className="group-hover:translate-x-1 transition-transform" />
                    </span>
                 </Link>
