@@ -8,6 +8,7 @@ import { useRole } from "@/hooks/useRole";
 type NavLink = { href: string; label: string };
 
 const buyerLinks: NavLink[] = [
+  { href: "/agent", label: "Agent Console" },
   { href: "/buyer/dashboard", label: "Dashboard" },
   { href: "/buyer/request", label: "Create Request" },
   { href: "/buyer/requests", label: "My Requests" },
@@ -15,6 +16,7 @@ const buyerLinks: NavLink[] = [
 ];
 
 const sellerLinks: NavLink[] = [
+  { href: "/agent", label: "Agent Console" },
   { href: "/seller/dashboard", label: "Dashboard" },
   { href: "/seller/policy", label: "My Policy" },
   { href: "/seller/tasks", label: "Active Tasks" },
@@ -22,6 +24,7 @@ const sellerLinks: NavLink[] = [
 ];
 
 const defaultLinks: NavLink[] = [
+  { href: "/agent", label: "Agent Console" },
   { href: "/role", label: "Dashboard" },
   { href: "/marketplace", label: "Marketplace" },
 ];
