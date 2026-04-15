@@ -1,508 +1,372 @@
 #![cfg(test)]
 
+//! Integration tests for PDE Escrow Contract v2 (row-by-row, batch-aware).
+//!
+//! Coverage:
+//!   1. Full happy-path:  deposit → deliver_batch × N → pay_batch × N → finalized
+//!   2. Partial delivery: deposit → deliver 2/3 → pay 2/3 → abort → refund
+//!   3. Timeout expiry:   deposit → time passes → refund_if_expired
+//!   4. Dispute resolve:  deposit → deliver → dispute → resolve(winner=seller)
+//!   5. MCP fee split:    pay_batch with mcp_fee_bps > 0 distributes correctly
+//!   6. Guard rails:      duplicate deposit, wrong caller, double-pay, indivisible amount
+
 use super::*;
 use soroban_sdk::{
-    testutils::{Address as _, Ledger},
+    testutils::{Address as _, Ledger, LedgerInfo},
     token::{Client as TokenClient, StellarAssetClient},
-    Address, Env, String,
+    Env, String,
 };
 
-// ---------------------------------------------------------------------------
-// Helpers
-// ---------------------------------------------------------------------------
+// ─── Test harness ─────────────────────────────────────────────────────────────
 
-fn create_token<'a>(env: &Env, admin: &Address) -> (Address, TokenClient<'a>, StellarAssetClient<'a>) {
-    let token_addr = env.register_stellar_asset_contract_v2(admin.clone()).address();
-    let token = TokenClient::new(env, &token_addr);
-    let token_admin = StellarAssetClient::new(env, &token_addr);
-    (token_addr, token, token_admin)
+struct Ctx {
+    env:          Env,
+    contract_id:  Address,
+    admin:        Address,
+    buyer:        Address,
+    seller:       Address,
+    platform:     Address,
+    dispute:      Address,
+    mcp:          Address,
+    usdc:         Address,
 }
 
-fn escrow_id(env: &Env, s: &str) -> String {
-    String::from_str(env, s)
+impl Ctx {
+    fn setup() -> Self {
+        let env = Env::default();
+        env.mock_all_auths();
+
+        let admin         = Address::generate(&env);
+        let buyer         = Address::generate(&env);
+        let seller        = Address::generate(&env);
+        let platform      = Address::generate(&env);
+        let dispute       = Address::generate(&env);
+        let mcp           = Address::generate(&env);
+
+        let contract_id = env.register(EscrowContract, ());
+        EscrowContractClient::new(&env, &contract_id).initialize(&admin);
+
+        let usdc = env.register_stellar_asset_contract_v2(admin.clone()).address();
+
+        Ctx { env, contract_id, admin, buyer, seller, platform, dispute, mcp, usdc }
+    }
+
+    fn c(&self) -> EscrowContractClient { EscrowContractClient::new(&self.env, &self.contract_id) }
+    fn tok(&self) -> TokenClient { TokenClient::new(&self.env, &self.usdc) }
+    fn tok_admin(&self) -> StellarAssetClient { StellarAssetClient::new(&self.env, &self.usdc) }
+
+    fn mint(&self, amount: i128) { self.tok_admin().mint(&self.buyer, &amount); }
+
+    fn s(&self, v: &str) -> String { String::from_str(&self.env, v) }
+
+    /// Standard deposit. timeout_secs=0 uses default (7 days).
+    fn deposit(&self, id: &str, total: i128, batches: u32, timeout: u64) -> String {
+        let eid = self.s(id);
+        self.c().deposit(
+            &eid,
+            &self.buyer, &self.seller, &self.platform, &self.dispute,
+            &self.usdc, &total, &batches,
+            &self.s("skill-x"),
+            &self.s("a1b2c3d4e5f6deadbeef0000"),
+            &self.mcp,
+            &0u32,
+            &timeout,
+        );
+        eid
+    }
+
+    /// Deposit with custom mcp_fee_bps.
+    fn deposit_mcp(&self, id: &str, total: i128, batches: u32, bps: u32) -> String {
+        let eid = self.s(id);
+        self.c().deposit(
+            &eid,
+            &self.buyer, &self.seller, &self.platform, &self.dispute,
+            &self.usdc, &total, &batches,
+            &self.s("skill-mcp"),
+            &self.s("pubkey-deadbeef"),
+            &self.mcp,
+            &bps,
+            &0u32,
+        );
+        eid
+    }
+
+    fn deliver(&self, eid: &String, idx: u32) {
+        self.c().deliver_batch(
+            eid, &self.seller, &idx,
+            &self.s(&format!("bafy-cid-{}", idx)),
+            &self.s(&format!("proof-hash-{:04x}", idx)),
+        );
+    }
+
+    fn pay(&self, eid: &String, idx: u32) {
+        self.c().pay_batch(eid, &self.buyer, &idx);
+    }
+
+    fn advance_time(&self, secs: u64) {
+        self.env.ledger().set(LedgerInfo {
+            timestamp:           self.env.ledger().timestamp() + secs,
+            protocol_version:    22,
+            sequence_number:     self.env.ledger().sequence() + 100,
+            network_id:          Default::default(),
+            base_reserve:        5_000_000,
+            min_temp_entry_ttl:  1,
+            min_persistent_entry_ttl: 1,
+            max_entry_ttl:       100_000,
+        });
+    }
 }
 
-fn setup_escrow(
-    env: &Env,
-) -> (
-    Address, // contract
-    Address, // usdc token
-    TokenClient<'_>,
-    Address, // depositor
-    Address, // recipient
-    Address, // platform
-    Address, // dispute
-    Address, // admin (for resolve_dispute)
-) {
-    let contract_addr = env.register(EscrowContract, ());
-
-    let admin = Address::generate(env);
-    let depositor = Address::generate(env);
-    let recipient = Address::generate(env);
-    let platform = Address::generate(env);
-    let dispute = Address::generate(env);
-
-    // Create USDC token
-    let (token_addr, token_client, token_admin) = create_token(env, &admin);
-    // Mint 10_000 USDC to depositor
-    token_admin.mint(&depositor, &10_000_i128);
-
-    // Create XLM token for staking
-    let (xlm_addr, _xlm_client, xlm_admin) = create_token(env, &admin);
-
-    // Initialize contract with staking
-    let client = EscrowContractClient::new(env, &contract_addr);
-    client.initialize(&admin, &xlm_addr, &100_000_000i128);
-
-    // Stake XLM for depositor (so they can use the escrow)
-    xlm_admin.mint(&depositor, &200_000_000i128);
-    client.stake(&depositor, &200_000_000i128);
-
-    (contract_addr, token_addr, token_client, depositor, recipient, platform, dispute, admin)
-}
-
-/// Helper: deposit + set_proof in one go
-fn deposit_and_link_proof(
-    env: &Env,
-    client: &EscrowContractClient,
-    depositor: &Address,
-    token_addr: &Address,
-    amount: i128,
-    recipient: &Address,
-    platform: &Address,
-    dispute: &Address,
-    eid: &String,
-    skill: &String,
-) {
-    client.deposit(
-        depositor, token_addr, &amount, recipient, platform, dispute, skill, eid,
-    );
-    let proof_cid = String::from_str(env, "QmProofCid123");
-    let proof_hash = String::from_str(env, "abc123hash");
-    client.set_proof(platform, eid, &proof_cid, &proof_hash);
-}
-
-// ---------------------------------------------------------------------------
-// Test 1: deposit → set_proof → release — splits arrive correctly
-// ---------------------------------------------------------------------------
+// ─── 1. Full happy-path ───────────────────────────────────────────────────────
 
 #[test]
-fn test_deposit_set_proof_and_release() {
-    let env = Env::default();
-    env.mock_all_auths();
+fn happy_path_three_batches() {
+    let ctx = Ctx::setup();
+    let total: i128 = 3_000_000; // 0.3 USDC (7 decimals)
+    let batches: u32 = 3;
 
-    let (contract_addr, token_addr, token_client, depositor, recipient, platform, dispute, _admin) =
-        setup_escrow(&env);
+    ctx.mint(total);
+    let eid = ctx.deposit("esc-happy", total, batches, 0);
 
-    let client = EscrowContractClient::new(&env, &contract_addr);
+    assert_eq!(ctx.tok().balance(&ctx.contract_id), total);
 
-    let amount: i128 = 1_000;
-    let eid = escrow_id(&env, "skill1:user1");
-    let skill = escrow_id(&env, "skill1");
+    for i in 0..batches {
+        ctx.deliver(&eid, i);
+        ctx.pay(&eid, i);
 
-    deposit_and_link_proof(
-        &env, &client, &depositor, &token_addr, amount,
-        &recipient, &platform, &dispute, &eid, &skill,
-    );
+        let b = ctx.c().get_batch(&eid, &i);
+        assert_ne!(b.delivered_at, 0, "batch {} must show delivered", i);
+        assert_ne!(b.paid_at,      0, "batch {} must show paid", i);
+    }
 
-    // Verify proof linked
-    let data = client.get_escrow(&eid);
-    assert_eq!(data.proof_hash, String::from_str(&env, "abc123hash"));
+    let e = ctx.c().get_escrow(&eid);
+    assert!(e.finalized,          "escrow must be finalized");
+    assert!(!e.aborted,           "escrow must not be aborted");
+    assert_eq!(e.remaining_balance, 0, "contract must hold zero");
 
-    client.release(&platform, &eid);
-
-    let expected_recipient = amount * 70 / 100;
-    let expected_platform = amount * 20 / 100;
-    let expected_dispute = amount - expected_recipient - expected_platform;
-
-    assert_eq!(token_client.balance(&recipient), expected_recipient);
-    assert_eq!(token_client.balance(&platform), expected_platform);
-    assert_eq!(token_client.balance(&dispute), expected_dispute);
-    assert_eq!(token_client.balance(&contract_addr), 0);
-
-    let data = client.get_escrow(&eid);
-    assert!(data.released);
+    // 70 / 20 / 10 split
+    assert_eq!(ctx.tok().balance(&ctx.seller),   total * 70 / 100);
+    assert_eq!(ctx.tok().balance(&ctx.platform),  total * 20 / 100);
+    let dispute_expected = total - total * 70 / 100 - total * 20 / 100;
+    assert_eq!(ctx.tok().balance(&ctx.dispute),  dispute_expected);
+    assert_eq!(ctx.tok().balance(&ctx.contract_id), 0);
 }
 
-// ---------------------------------------------------------------------------
-// Test 2: release without proof → panic
-// ---------------------------------------------------------------------------
+// ─── 2. Abort mid-stream ──────────────────────────────────────────────────────
 
 #[test]
-#[should_panic(expected = "proof not linked: call set_proof first")]
-fn test_release_without_proof_panics() {
-    let env = Env::default();
-    env.mock_all_auths();
+fn abort_mid_stream_refunds_remainder() {
+    let ctx = Ctx::setup();
+    let total: i128 = 3_000_000;
+    let batches: u32 = 3;
+    let per = total / batches as i128;
 
-    let (contract_addr, token_addr, _token_client, depositor, recipient, platform, dispute, _admin) =
-        setup_escrow(&env);
+    ctx.mint(total);
+    let eid = ctx.deposit("esc-abort", total, batches, 0);
 
-    let client = EscrowContractClient::new(&env, &contract_addr);
+    // Pay first 2 batches
+    for i in 0..2 {
+        ctx.deliver(&eid, i);
+        ctx.pay(&eid, i);
+    }
 
-    let eid = escrow_id(&env, "noproof:esc");
-    let skill = escrow_id(&env, "noproof");
+    // Buyer aborts → gets remaining 1 batch back
+    ctx.c().abort(&eid, &ctx.buyer);
 
-    client.deposit(
-        &depositor, &token_addr, &1_000_i128,
-        &recipient, &platform, &dispute, &skill, &eid,
-    );
+    let e = ctx.c().get_escrow(&eid);
+    assert!(e.aborted);
+    assert_eq!(e.remaining_balance, 0);
 
-    // Try release without set_proof — must panic
-    client.release(&platform, &eid);
+    // Seller: 70% of 2 paid batches
+    assert_eq!(ctx.tok().balance(&ctx.seller), per * 2 * 70 / 100);
+    // Buyer: refund of 1 batch
+    assert_eq!(ctx.tok().balance(&ctx.buyer), per);
+    // Contract: empty
+    assert_eq!(ctx.tok().balance(&ctx.contract_id), 0);
 }
 
-// ---------------------------------------------------------------------------
-// Test 3: deposit → refund (before proof)
-// ---------------------------------------------------------------------------
+// ─── 3. Timeout → refund_if_expired ──────────────────────────────────────────
 
 #[test]
-fn test_deposit_and_refund() {
-    let env = Env::default();
-    env.mock_all_auths();
+fn timeout_refund_returns_full_balance() {
+    let ctx = Ctx::setup();
+    let total: i128 = 1_000_000;
 
-    let (contract_addr, token_addr, token_client, depositor, recipient, platform, dispute, _admin) =
-        setup_escrow(&env);
+    ctx.mint(total);
+    let eid = ctx.deposit("esc-timeout", total, 1, 3_600); // 1h timeout
 
-    let client = EscrowContractClient::new(&env, &contract_addr);
+    ctx.advance_time(3_601); // past timeout
 
-    let amount: i128 = 500;
-    let eid = escrow_id(&env, "skill2:user2");
-    let skill = escrow_id(&env, "skill2");
+    ctx.c().refund_if_expired(&eid);
 
-    client.deposit(
-        &depositor, &token_addr, &amount,
-        &recipient, &platform, &dispute, &skill, &eid,
-    );
-
-    assert_eq!(token_client.balance(&depositor), 9_500);
-    assert_eq!(token_client.balance(&contract_addr), amount);
-
-    client.refund(&depositor, &eid);
-
-    assert_eq!(token_client.balance(&depositor), 10_000);
-    assert_eq!(token_client.balance(&contract_addr), 0);
+    let e = ctx.c().get_escrow(&eid);
+    assert!(e.aborted);
+    assert_eq!(ctx.tok().balance(&ctx.buyer), total);
+    assert_eq!(ctx.tok().balance(&ctx.contract_id), 0);
 }
 
-// ---------------------------------------------------------------------------
-// Test 4: refund blocked after proof submitted
-// ---------------------------------------------------------------------------
+// ─── 4. Dispute + resolve ─────────────────────────────────────────────────────
 
 #[test]
-#[should_panic(expected = "proof already submitted, cannot refund")]
-fn test_refund_blocked_after_proof() {
-    let env = Env::default();
-    env.mock_all_auths();
+fn dispute_batch_resolve_seller_wins() {
+    let ctx = Ctx::setup();
+    let total: i128 = 2_000_000;
+    let batches: u32 = 2;
+    let per = total / batches as i128;
 
-    let (contract_addr, token_addr, _token_client, depositor, recipient, platform, dispute, _admin) =
-        setup_escrow(&env);
+    ctx.mint(total);
+    let eid = ctx.deposit("esc-dispute", total, batches, 0);
 
-    let client = EscrowContractClient::new(&env, &contract_addr);
+    // Seller delivers batch 0, buyer disputes it
+    ctx.deliver(&eid, 0);
+    ctx.c().dispute_batch(&eid, &ctx.buyer, &0);
 
-    let eid = escrow_id(&env, "refund_block:esc");
-    let skill = escrow_id(&env, "refund_block");
+    let b0 = ctx.c().get_batch(&eid, &0);
+    assert!(b0.disputed);
 
-    deposit_and_link_proof(
-        &env, &client, &depositor, &token_addr, 1_000,
-        &recipient, &platform, &dispute, &eid, &skill,
-    );
+    // Admin resolves in seller's favour → seller gets full per_batch
+    ctx.c().resolve_batch(&eid, &0, &ctx.seller);
 
-    // Try refund after proof set — must panic
-    client.refund(&depositor, &eid);
+    let b0r = ctx.c().get_batch(&eid, &0);
+    assert!(!b0r.disputed);
+    assert_ne!(b0r.paid_at, 0);
+    assert_eq!(ctx.tok().balance(&ctx.seller), per);
+
+    // Normal delivery of batch 1
+    ctx.deliver(&eid, 1);
+    ctx.pay(&eid, 1);
+
+    let e = ctx.c().get_escrow(&eid);
+    assert!(e.finalized);
+    assert_eq!(ctx.tok().balance(&ctx.contract_id), 0);
 }
 
-// ---------------------------------------------------------------------------
-// Test 5: refund blocked if disputed
-// ---------------------------------------------------------------------------
-
 #[test]
-#[should_panic(expected = "cannot refund disputed escrow")]
-fn test_refund_blocked_if_disputed() {
-    let env = Env::default();
-    env.mock_all_auths();
+fn dispute_batch_resolve_buyer_wins() {
+    let ctx = Ctx::setup();
+    let total: i128 = 1_000_000;
 
-    let (contract_addr, token_addr, _token_client, depositor, recipient, platform, dispute, _admin) =
-        setup_escrow(&env);
+    ctx.mint(total);
+    let eid = ctx.deposit("esc-disp-b", total, 1, 0);
 
-    let client = EscrowContractClient::new(&env, &contract_addr);
+    ctx.deliver(&eid, 0);
+    ctx.c().dispute_batch(&eid, &ctx.buyer, &0);
+    // Admin sends batch amount to buyer (proof was bad)
+    ctx.c().resolve_batch(&eid, &0, &ctx.buyer);
 
-    let eid = escrow_id(&env, "disputed_refund:esc");
-    let skill = escrow_id(&env, "disputed_refund");
-
-    client.deposit(
-        &depositor, &token_addr, &1_000_i128,
-        &recipient, &platform, &dispute, &skill, &eid,
-    );
-
-    client.dispute(&platform, &eid);
-    // Try refund after dispute — must panic
-    client.refund(&depositor, &eid);
+    let e = ctx.c().get_escrow(&eid);
+    assert!(e.finalized);
+    assert_eq!(ctx.tok().balance(&ctx.buyer), total);
+    assert_eq!(ctx.tok().balance(&ctx.seller), 0);
 }
 
-// ---------------------------------------------------------------------------
-// Test 6: timeout expiry refund
-// ---------------------------------------------------------------------------
+// ─── 5. MCP fee split ─────────────────────────────────────────────────────────
 
 #[test]
-fn test_refund_if_expired() {
-    let env = Env::default();
-    env.mock_all_auths();
+fn mcp_fee_split_correct() {
+    let ctx = Ctx::setup();
+    let total: i128 = 1_000_000; // 0.1 USDC
+    let bps: u32 = 500; // 5%
 
-    let (contract_addr, token_addr, token_client, depositor, recipient, platform, dispute, _admin) =
-        setup_escrow(&env);
+    ctx.mint(total);
+    let eid = ctx.deposit_mcp("esc-mcp", total, 1, bps);
 
-    let client = EscrowContractClient::new(&env, &contract_addr);
+    ctx.deliver(&eid, 0);
+    ctx.pay(&eid, 0);
 
-    let eid = escrow_id(&env, "timeout:esc");
-    let skill = escrow_id(&env, "timeout");
+    let per            = total;
+    let seller_share   = per * 70 / 100;
+    let platform_base  = per * 20 / 100;
+    let dispute_share  = per - seller_share - platform_base;
+    let mcp_cut        = per * (bps as i128) / 10_000;
+    let platform_net   = platform_base - mcp_cut;
 
-    // Deposit with 1 hour timeout
-    client.deposit_with_timeout(
-        &depositor, &token_addr, &1_000_i128,
-        &recipient, &platform, &dispute, &skill, &eid, &3600u64,
-    );
-
-    assert_eq!(token_client.balance(&contract_addr), 1_000);
-
-    // Advance ledger by 2 hours
-    env.ledger().with_mut(|li| {
-        li.timestamp += 7200;
-    });
-
-    // Anyone can refund expired escrow
-    client.refund_if_expired(&eid);
-
-    assert_eq!(token_client.balance(&depositor), 10_000);
-    assert_eq!(token_client.balance(&contract_addr), 0);
+    assert_eq!(ctx.tok().balance(&ctx.seller),   seller_share,  "seller share");
+    assert_eq!(ctx.tok().balance(&ctx.platform),  platform_net,  "platform net");
+    assert_eq!(ctx.tok().balance(&ctx.dispute),  dispute_share, "dispute share");
+    assert_eq!(ctx.tok().balance(&ctx.mcp),       mcp_cut,       "mcp cut");
+    assert_eq!(ctx.tok().balance(&ctx.contract_id), 0);
 }
 
-// ---------------------------------------------------------------------------
-// Test 7: timeout refund blocked if not expired
-// ---------------------------------------------------------------------------
+// ─── 6. Guard rails ───────────────────────────────────────────────────────────
 
 #[test]
-#[should_panic(expected = "escrow has not expired yet")]
-fn test_refund_if_not_expired_panics() {
-    let env = Env::default();
-    env.mock_all_auths();
-
-    let (contract_addr, token_addr, _token_client, depositor, recipient, platform, dispute, _admin) =
-        setup_escrow(&env);
-
-    let client = EscrowContractClient::new(&env, &contract_addr);
-
-    let eid = escrow_id(&env, "not_expired:esc");
-    let skill = escrow_id(&env, "not_expired");
-
-    client.deposit_with_timeout(
-        &depositor, &token_addr, &1_000_i128,
-        &recipient, &platform, &dispute, &skill, &eid, &3600u64,
-    );
-
-    // Try refund immediately (not expired) — must panic
-    client.refund_if_expired(&eid);
+#[should_panic(expected = "escrow_id already exists")]
+fn duplicate_deposit_panics() {
+    let ctx = Ctx::setup();
+    ctx.mint(2_000_000);
+    ctx.deposit("esc-dup", 1_000_000, 1, 0);
+    ctx.deposit("esc-dup", 1_000_000, 1, 0);
 }
 
-// ---------------------------------------------------------------------------
-// Test 8: dispute resolution by admin
-// ---------------------------------------------------------------------------
-
 #[test]
-fn test_resolve_dispute() {
-    let env = Env::default();
-    env.mock_all_auths();
-
-    let (contract_addr, token_addr, token_client, depositor, recipient, platform, dispute, _admin) =
-        setup_escrow(&env);
-
-    let client = EscrowContractClient::new(&env, &contract_addr);
-
-    let eid = escrow_id(&env, "dispute_resolve:esc");
-    let skill = escrow_id(&env, "dispute_resolve");
-
-    client.deposit(
-        &depositor, &token_addr, &1_000_i128,
-        &recipient, &platform, &dispute, &skill, &eid,
+#[should_panic(expected = "only seller may deliver")]
+fn wrong_deliver_caller_panics() {
+    let ctx = Ctx::setup();
+    ctx.mint(1_000_000);
+    let eid = ctx.deposit("esc-gc1", 1_000_000, 1, 0);
+    // Buyer (not seller) tries to deliver
+    ctx.c().deliver_batch(
+        &eid, &ctx.buyer, &0,
+        &ctx.s("bafy-x"), &ctx.s("hash-x"),
     );
-
-    // Dispute
-    client.dispute(&platform, &eid);
-
-    // Admin resolves: recipient wins
-    client.resolve_dispute(&eid, &recipient);
-
-    assert_eq!(token_client.balance(&recipient), 1_000);
-    assert_eq!(token_client.balance(&contract_addr), 0);
-
-    let data = client.get_escrow(&eid);
-    assert!(data.released);
-    assert!(data.disputed);
 }
 
-// ---------------------------------------------------------------------------
-// Test 9: resolve_dispute fails if not disputed
-// ---------------------------------------------------------------------------
-
 #[test]
-#[should_panic(expected = "escrow is not disputed")]
-fn test_resolve_dispute_not_disputed_panics() {
-    let env = Env::default();
-    env.mock_all_auths();
-
-    let (contract_addr, token_addr, _token_client, depositor, recipient, platform, dispute, _admin) =
-        setup_escrow(&env);
-
-    let client = EscrowContractClient::new(&env, &contract_addr);
-
-    let eid = escrow_id(&env, "not_disputed:esc");
-    let skill = escrow_id(&env, "not_disputed");
-
-    client.deposit(
-        &depositor, &token_addr, &1_000_i128,
-        &recipient, &platform, &dispute, &skill, &eid,
-    );
-
-    // Try resolve without dispute — must panic
-    client.resolve_dispute(&eid, &recipient);
+#[should_panic(expected = "only buyer (depositor) may pay")]
+fn wrong_pay_caller_panics() {
+    let ctx = Ctx::setup();
+    ctx.mint(1_000_000);
+    let eid = ctx.deposit("esc-gc2", 1_000_000, 1, 0);
+    ctx.deliver(&eid, 0);
+    // Seller tries to pay — must panic
+    ctx.c().pay_batch(&eid, &ctx.seller, &0);
 }
 
-// ---------------------------------------------------------------------------
-// Test 10: unauthorized release → panic
-// ---------------------------------------------------------------------------
-
 #[test]
-#[should_panic(expected = "unauthorized: only platform may release")]
-fn test_unauthorized_release_panics() {
-    let env = Env::default();
-    env.mock_all_auths();
-
-    let (contract_addr, token_addr, _token_client, depositor, recipient, platform, dispute, _admin) =
-        setup_escrow(&env);
-
-    let client = EscrowContractClient::new(&env, &contract_addr);
-
-    let eid = escrow_id(&env, "skill3:user3");
-    let skill = escrow_id(&env, "skill3");
-
-    deposit_and_link_proof(
-        &env, &client, &depositor, &token_addr, 300,
-        &recipient, &platform, &dispute, &eid, &skill,
-    );
-
-    // Attempt release from depositor — must panic
-    client.release(&depositor, &eid);
+#[should_panic(expected = "batch already paid")]
+fn double_pay_panics() {
+    let ctx = Ctx::setup();
+    ctx.mint(1_000_000);
+    let eid = ctx.deposit("esc-gc3", 1_000_000, 1, 0);
+    ctx.deliver(&eid, 0);
+    ctx.pay(&eid, 0);
+    ctx.pay(&eid, 0); // second pay must panic
 }
 
-// ---------------------------------------------------------------------------
-// Test 11: double release → panic
-// ---------------------------------------------------------------------------
-
 #[test]
-#[should_panic(expected = "already released")]
-fn test_double_release_panics() {
-    let env = Env::default();
-    env.mock_all_auths();
-
-    let (contract_addr, token_addr, _token_client, depositor, recipient, platform, dispute, _admin) =
-        setup_escrow(&env);
-
-    let client = EscrowContractClient::new(&env, &contract_addr);
-
-    let eid = escrow_id(&env, "skill5:user5");
-    let skill = escrow_id(&env, "skill5");
-
-    deposit_and_link_proof(
-        &env, &client, &depositor, &token_addr, 1_000,
-        &recipient, &platform, &dispute, &eid, &skill,
-    );
-
-    client.release(&platform, &eid);
-    client.release(&platform, &eid);
+#[should_panic(expected = "batch not found")]
+fn pay_without_deliver_panics() {
+    let ctx = Ctx::setup();
+    ctx.mint(1_000_000);
+    let eid = ctx.deposit("esc-gc4", 1_000_000, 1, 0);
+    ctx.pay(&eid, 0); // no deliver first
 }
 
-// ---------------------------------------------------------------------------
-// Test 12: stake check
-// ---------------------------------------------------------------------------
-
 #[test]
-fn test_stake_query() {
-    let env = Env::default();
-    env.mock_all_auths();
-
-    let (contract_addr, _token_addr, _token_client, depositor, _recipient, _platform, _dispute, _admin) =
-        setup_escrow(&env);
-
-    let client = EscrowContractClient::new(&env, &contract_addr);
-
-    // depositor was staked 200_000_000 in setup
-    assert_eq!(client.get_stake(&depositor), 200_000_000);
+#[should_panic(expected = "total_amount must be exactly divisible by total_batches")]
+fn indivisible_amount_panics() {
+    let ctx = Ctx::setup();
+    ctx.mint(1_010_000);
+    ctx.deposit("esc-gc5", 1_010_000, 3, 0); // 101 not divisible by 3
 }
 
-// ---------------------------------------------------------------------------
-// Test 13: release_with_mcp_fee (requires proof linkage)
-// ---------------------------------------------------------------------------
-
 #[test]
-fn test_release_with_mcp_fee() {
-    let env = Env::default();
-    env.mock_all_auths();
-
-    let (contract_addr, token_addr, token_client, depositor, recipient, platform, dispute, _admin) =
-        setup_escrow(&env);
-
-    let client = EscrowContractClient::new(&env, &contract_addr);
-    let mcp_creator = Address::generate(&env);
-
-    let amount: i128 = 1_000;
-    let eid = escrow_id(&env, "skill6:user6");
-    let skill = escrow_id(&env, "skill6");
-
-    deposit_and_link_proof(
-        &env, &client, &depositor, &token_addr, amount,
-        &recipient, &platform, &dispute, &eid, &skill,
-    );
-
-    // 500 bps => 5% of total, deducted from platform 20%
-    client.release_with_mcp_fee(&platform, &eid, &mcp_creator, &500u32);
-
-    let expected_recipient = amount * 70 / 100;
-    let expected_dispute = amount * 10 / 100;
-    let expected_mcp = amount * 500 / 10000;
-    let expected_platform = (amount * 20 / 100) - expected_mcp;
-
-    assert_eq!(token_client.balance(&recipient), expected_recipient);
-    assert_eq!(token_client.balance(&platform), expected_platform);
-    assert_eq!(token_client.balance(&mcp_creator), expected_mcp);
-    assert_eq!(token_client.balance(&dispute), expected_dispute);
-    assert_eq!(token_client.balance(&contract_addr), 0);
+#[should_panic(expected = "escrow has not expired")]
+fn premature_refund_panics() {
+    let ctx = Ctx::setup();
+    ctx.mint(1_000_000);
+    ctx.deposit("esc-gc6", 1_000_000, 1, 0);
+    ctx.c().refund_if_expired(&ctx.s("esc-gc6"));
 }
 
-// ---------------------------------------------------------------------------
-// Test 14: escrow data includes new fields
-// ---------------------------------------------------------------------------
-
 #[test]
-fn test_escrow_data_has_proof_and_timeout_fields() {
-    let env = Env::default();
-    env.mock_all_auths();
-
-    let (contract_addr, token_addr, _token_client, depositor, recipient, platform, dispute, _admin) =
-        setup_escrow(&env);
-
-    let client = EscrowContractClient::new(&env, &contract_addr);
-
-    let eid = escrow_id(&env, "fields:esc");
-    let skill = escrow_id(&env, "fields");
-
-    client.deposit(
-        &depositor, &token_addr, &1_000_i128,
-        &recipient, &platform, &dispute, &skill, &eid,
-    );
-
-    let data = client.get_escrow(&eid);
-
-    // New fields should be initialized correctly
-    assert_eq!(data.proof_cid, String::from_str(&env, ""));
-    assert_eq!(data.proof_hash, String::from_str(&env, ""));
-    assert!(data.timeout_at > data.created_at);
-    assert_eq!(data.timeout_at - data.created_at, 7 * 24 * 60 * 60);
+#[should_panic(expected = "escrow is already closed")]
+fn abort_after_finalize_panics() {
+    let ctx = Ctx::setup();
+    ctx.mint(1_000_000);
+    let eid = ctx.deposit("esc-gc7", 1_000_000, 1, 0);
+    ctx.deliver(&eid, 0);
+    ctx.pay(&eid, 0); // finalized
+    ctx.c().abort(&eid, &ctx.buyer);
 }
