@@ -46,3 +46,6 @@ next-env.d.ts
 apps/*/node_modules/
 packages/*/node_modules/
 contracts/*/target/
+
+# claude code local settings (may contain secrets)
+.claude/settings.local.json
